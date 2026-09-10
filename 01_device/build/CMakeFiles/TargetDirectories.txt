@@ -1,3 +1,0 @@
-/home/saidur/Dev/learning/uhd/01_device/build/CMakeFiles/device_info.dir
-/home/saidur/Dev/learning/uhd/01_device/build/CMakeFiles/edit_cache.dir
-/home/saidur/Dev/learning/uhd/01_device/build/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,14 @@
+# CMake and build output
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+install_manifest.txt
+
+# Generated SDR sample captures
+*.fc32
+
+# Local editor and OS files
+.vscode/
+.DS_Store

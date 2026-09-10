@@ -1,3 +1,0 @@
-/home/saidur/Dev/learning/uhd/02_rx/build/CMakeFiles/rx_samples.dir
-/home/saidur/Dev/learning/uhd/02_rx/build/CMakeFiles/edit_cache.dir
-/home/saidur/Dev/learning/uhd/02_rx/build/CMakeFiles/rebuild_cache.dir

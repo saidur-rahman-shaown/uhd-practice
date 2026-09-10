@@ -17,7 +17,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     // ------------------------------------------------------------
     // 2. RX configuration
     // ------------------------------------------------------------
-    const double rx_frequency = 915e6;
+    const double rx_frequency = 3.5e9;
     const double rx_sample_rate = 1e6;
     const double rx_gain = 30.0;
     const std::size_t channel = 0;

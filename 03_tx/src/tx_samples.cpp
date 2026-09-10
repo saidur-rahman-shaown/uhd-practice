@@ -20,7 +20,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     // 2. TX configuration
     // ------------------------------------------------------------
 
-    const double tx_frequency = 915e6;
+    const double tx_frequency = 3.5e9;
     const double tx_sample_rate = 1e6;
     const double tx_gain = 20.0;
 

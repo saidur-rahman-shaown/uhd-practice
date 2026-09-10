@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/saidur/Dev/learning/uhd/03_tx/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

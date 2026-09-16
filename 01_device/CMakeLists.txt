@@ -10,6 +10,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(UHD REQUIRED)
 
+# Some UHD packages (Ubuntu's) ship the old-style config that only sets
+# UHD_LIBRARIES/UHD_INCLUDE_DIRS. Define the imported target when it is missing.
+if(NOT TARGET UHD::uhd)
+    add_library(UHD::uhd INTERFACE IMPORTED)
+    target_include_directories(UHD::uhd INTERFACE ${UHD_INCLUDE_DIRS})
+    target_link_libraries(UHD::uhd INTERFACE ${UHD_LIBRARIES})
+endif()
+
 add_executable(device_info
     src/device_info.cpp
 )

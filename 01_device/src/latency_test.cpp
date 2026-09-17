@@ -1856,6 +1856,29 @@ void transmit_zadoff_chu(
 
     burst.resize(zc_length * 4, complex_t(0.0f, 0.0f));
 
+    /*
+     * Batch several repetitions into one send.
+     *
+     * Feeding the device one 1604-sample burst per call does not
+     * keep the TX chain fed: it underflows, then reports sequence
+     * errors, and the radio goes silent while send() still accepts
+     * samples at the nominal rate. A buffer of a few tens of
+     * thousands of samples streams cleanly.
+     *
+     * Scale off full scale as well -- Zadoff-Chu is constant
+     * modulus at 1.0, which leaves no headroom in the converter.
+     */
+    const size_t reps = 10;
+
+    std::vector<complex_t> buffer;
+    buffer.reserve(burst.size() * reps);
+
+    for (size_t r = 0; r < reps; ++r)
+    {
+        for (const auto& c : burst)
+            buffer.push_back(c * 0.7f);
+    }
+
     auto tx_stream =
         usrp->get_tx_stream(
             uhd::stream_args_t("fc32", "sc16"));
@@ -1880,27 +1903,32 @@ void transmit_zadoff_chu(
      * goes quiet while send() still happily accepts samples.
      * Independent bursts recover from an underflow on their own.
      */
+    uhd::tx_metadata_t md;
+
+    md.start_of_burst = true;
+    md.end_of_burst = false;
+    md.has_time_spec = false;
+
     while (std::chrono::duration<double>(
                clock_type::now() - t_start).count() < seconds)
     {
-        uhd::tx_metadata_t md;
-
-        md.start_of_burst = true;
-        md.end_of_burst = true;
-        md.has_time_spec = false;
-
         const size_t sent =
             tx_stream->send(
-                burst.data(),
-                burst.size(),
+                buffer.data(),
+                buffer.size(),
                 md,
                 1.0);
 
-        if (sent != burst.size())
+        if (sent != buffer.size())
             ++short_sends;
 
-        ++bursts;
+        md.start_of_burst = false;
+
+        bursts += reps;
     }
+
+    md.end_of_burst = true;
+    tx_stream->send(buffer.data(), 0, md);
 
     std::cout
         << "Sent " << bursts << " bursts ("

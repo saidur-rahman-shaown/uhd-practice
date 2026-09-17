@@ -2057,6 +2057,23 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     }
     else if (mode == "zctx")
     {
+        /*
+         * The default 20 dB is far too low to push a detectable
+         * signal through the inter-host cable and its attenuator,
+         * so allow an override here.
+         */
+        if (argc >= 4)
+        {
+            const double g = std::stod(argv[3]);
+
+            usrp->set_tx_gain(g);
+
+            std::cout
+                << "TX gain overridden to "
+                << usrp->get_tx_gain()
+                << " dB\n";
+        }
+
         transmit_zadoff_chu(
             usrp,
             cfg,
@@ -2091,7 +2108,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             << "  ./latency_test txmeta\n"
             << "  ./latency_test rxmeta\n"
             << "  ./latency_test zc\n"
-            << "  ./latency_test zctx [seconds]   (two-host: sender)\n"
+            << "  ./latency_test zctx [seconds] [tx_gain]  (two-host: sender)\n"
             << "  ./latency_test zcrx [seconds]   (two-host: receiver)\n"
             << "  ./latency_test all\n";
 

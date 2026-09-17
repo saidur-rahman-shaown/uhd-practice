@@ -66,8 +66,11 @@ def main():
         sent += stream.send(buf, md)
         md.start_of_burst = False
 
+    # Close the burst cleanly. The Python binding checks the array shape
+    # against the channel count, so a zero-length array is rejected -- send a
+    # short buffer of silence with the end-of-burst flag instead.
     md.end_of_burst = True
-    stream.send(np.zeros(0, dtype=np.complex64), md)
+    stream.send(np.zeros(N_ZC, dtype=np.complex64), md)
 
     print(f"sent {sent} samples in {seconds:.0f} s")
 

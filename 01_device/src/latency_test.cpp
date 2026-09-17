@@ -1533,6 +1533,423 @@ void run_zadoff_chu_test(
 
 
 // ============================================================
+// Segmented (CFO-tolerant) Zadoff-Chu detection
+// ============================================================
+
+/*
+ * Two B210s on their own internal TCXOs can sit up to a few ppm
+ * apart. At 3.5 GHz that is several kHz of carrier offset, and a
+ * coherent correlation across a whole 401-sample sequence rotates
+ * through multiple phase cycles and smears the peak away.
+ *
+ * Splitting the correlation into short segments keeps each one
+ * inside a small fraction of a cycle. The segments are combined
+ * by magnitude, which throws away the phase between them and so
+ * no longer cares about the offset. The cost is a few dB of
+ * processing gain versus the coherent version.
+ */
+
+struct ZcSegmentedDetection
+{
+    bool found = false;
+
+    size_t peak_index = 0;
+
+    double peak_magnitude = 0.0;
+    double mean_magnitude = 0.0;
+    double peak_to_mean = 0.0;
+
+    /*
+     * Carrier offset estimated from the phase advance between
+     * consecutive segment correlations at the peak lag.
+     */
+    double cfo_hz = 0.0;
+};
+
+
+ZcSegmentedDetection detect_zadoff_chu_segmented(
+    const std::vector<complex_t>& capture,
+    const std::vector<complex_t>& reference,
+    double sample_rate,
+    size_t num_segments = 16,
+    double threshold = 6.0)
+{
+    ZcSegmentedDetection result{};
+
+    if (reference.empty()
+        || num_segments == 0
+        || capture.size() < reference.size())
+    {
+        return result;
+    }
+
+    const size_t seg_len =
+        reference.size() / num_segments;
+
+    if (seg_len == 0)
+        return result;
+
+    const size_t num_lags =
+        capture.size() - reference.size() + 1;
+
+    double sum_magnitude = 0.0;
+
+    std::vector<complex_t> best_segments;
+
+    for (size_t lag = 0; lag < num_lags; ++lag)
+    {
+        double magnitude = 0.0;
+
+        std::vector<complex_t> segments;
+        segments.reserve(num_segments);
+
+        for (size_t s = 0; s < num_segments; ++s)
+        {
+            complex_t acc(0.0f, 0.0f);
+
+            const size_t base = s * seg_len;
+
+            for (size_t k = 0; k < seg_len; ++k)
+            {
+                acc += capture[lag + base + k]
+                     * std::conj(reference[base + k]);
+            }
+
+            /*
+             * Non-coherent combining: sum the magnitudes, not the
+             * complex values, so a phase ramp across segments does
+             * not cancel the result.
+             */
+            magnitude += std::abs(acc);
+
+            segments.push_back(acc);
+        }
+
+        sum_magnitude += magnitude;
+
+        if (magnitude > result.peak_magnitude)
+        {
+            result.peak_magnitude = magnitude;
+            result.peak_index = lag;
+            best_segments = segments;
+        }
+    }
+
+    result.mean_magnitude =
+        sum_magnitude / static_cast<double>(num_lags);
+
+    if (result.mean_magnitude > 0.0)
+    {
+        result.peak_to_mean =
+            result.peak_magnitude / result.mean_magnitude;
+    }
+
+    result.found =
+        result.peak_to_mean >= threshold;
+
+    /*
+     * Each segment spans seg_len/sample_rate seconds. A carrier
+     * offset shows up as a constant phase step from one segment
+     * correlation to the next.
+     */
+    if (result.found && best_segments.size() >= 2)
+    {
+        complex_t phase_step(0.0f, 0.0f);
+
+        for (size_t s = 1; s < best_segments.size(); ++s)
+        {
+            phase_step +=
+                best_segments[s]
+                * std::conj(best_segments[s - 1]);
+        }
+
+        const double seg_seconds =
+            static_cast<double>(seg_len) / sample_rate;
+
+        result.cfo_hz =
+            std::arg(phase_step)
+            / (2.0 * M_PI * seg_seconds);
+    }
+
+    return result;
+}
+
+
+// ============================================================
+// 9a. Two-host ZC transmitter
+// ============================================================
+
+void transmit_zadoff_chu(
+    uhd::usrp::multi_usrp::sptr usrp,
+    const Config& cfg,
+    double seconds)
+{
+    std::cout << "\n";
+    std::cout << "====================================================\n";
+    std::cout << "9a. ZADOFF-CHU TRANSMITTER (two-host)\n";
+    std::cout << "====================================================\n";
+
+    const size_t zc_length = 401;
+    const size_t zc_root = 25;
+
+    const auto zc =
+        make_zadoff_chu(zc_length, zc_root);
+
+    /*
+     * Pad each burst with silence so the receiver sees a clear
+     * gap between repetitions and cannot confuse two of them.
+     */
+    std::vector<complex_t> burst = zc;
+
+    burst.resize(zc_length * 4, complex_t(0.0f, 0.0f));
+
+    auto tx_stream =
+        usrp->get_tx_stream(
+            uhd::stream_args_t("fc32", "sc16"));
+
+    std::cout
+        << "Transmitting ZC (length " << zc_length
+        << ", root " << zc_root << ") for "
+        << seconds << " s...\n";
+
+    const auto t_start = clock_type::now();
+
+    size_t bursts = 0;
+
+    uhd::tx_metadata_t md;
+
+    md.start_of_burst = true;
+    md.end_of_burst = false;
+    md.has_time_spec = false;
+
+    while (std::chrono::duration<double>(
+               clock_type::now() - t_start).count() < seconds)
+    {
+        tx_stream->send(
+            burst.data(),
+            burst.size(),
+            md);
+
+        md.start_of_burst = false;
+
+        ++bursts;
+    }
+
+    /*
+     * Close the burst cleanly so the device does not report an
+     * underflow for the trailing edge.
+     */
+    md.end_of_burst = true;
+
+    tx_stream->send(
+        burst.data(),
+        0,
+        md);
+
+    std::cout
+        << "Sent " << bursts << " bursts ("
+        << bursts * burst.size() << " samples).\n";
+}
+
+
+// ============================================================
+// 9b. Two-host ZC receiver
+// ============================================================
+
+void receive_zadoff_chu(
+    uhd::usrp::multi_usrp::sptr usrp,
+    const Config& cfg,
+    double seconds)
+{
+    std::cout << "\n";
+    std::cout << "====================================================\n";
+    std::cout << "9b. ZADOFF-CHU RECEIVER (two-host)\n";
+    std::cout << "====================================================\n";
+
+    const size_t zc_length = 401;
+    const size_t zc_root = 25;
+
+    const auto zc =
+        make_zadoff_chu(zc_length, zc_root);
+
+    auto rx_stream =
+        usrp->get_rx_stream(
+            uhd::stream_args_t("fc32", "sc16"));
+
+    uhd::stream_cmd_t cmd(
+        uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+
+    cmd.stream_now = true;
+
+    rx_stream->issue_stream_cmd(cmd);
+
+    std::vector<complex_t> chunk(
+        rx_stream->get_max_num_samps());
+
+    /*
+     * Correlate over a window a few bursts long, carrying the tail
+     * of the previous window so a sequence straddling the boundary
+     * is still seen whole.
+     */
+    const size_t window_len = zc_length * 8;
+
+    std::vector<complex_t> window;
+    window.reserve(window_len * 2);
+
+    const auto t_start = clock_type::now();
+
+    size_t num_windows = 0;
+    size_t num_detected = 0;
+    size_t num_overflow = 0;
+
+    std::vector<double> ratios;
+    std::vector<double> cfos;
+
+    std::cout
+        << "Listening for "
+        << seconds
+        << " s (detector: 16 segments, threshold 6.0)...\n\n";
+
+    while (std::chrono::duration<double>(
+               clock_type::now() - t_start).count() < seconds)
+    {
+        uhd::rx_metadata_t md;
+
+        const size_t got =
+            rx_stream->recv(
+                chunk.data(),
+                chunk.size(),
+                md,
+                1.0);
+
+        if (md.error_code
+            == uhd::rx_metadata_t::ERROR_CODE_OVERFLOW)
+        {
+            ++num_overflow;
+            continue;
+        }
+
+        if (md.error_code
+            != uhd::rx_metadata_t::ERROR_CODE_NONE)
+        {
+            std::cout
+                << "  RX error: "
+                << rx_error_to_string(md.error_code)
+                << "\n";
+
+            continue;
+        }
+
+        window.insert(
+            window.end(),
+            chunk.begin(),
+            chunk.begin() + got);
+
+        if (window.size() < window_len)
+            continue;
+
+        const auto det =
+            detect_zadoff_chu_segmented(
+                window,
+                zc,
+                cfg.sample_rate);
+
+        ++num_windows;
+
+        ratios.push_back(det.peak_to_mean);
+
+        if (det.found)
+        {
+            ++num_detected;
+
+            cfos.push_back(det.cfo_hz);
+
+            if (num_detected <= 10)
+            {
+                std::cout
+                    << "  DETECT: offset "
+                    << std::setw(5) << det.peak_index
+                    << ", peak/mean = "
+                    << std::fixed << std::setprecision(1)
+                    << std::setw(6) << det.peak_to_mean
+                    << ", CFO = "
+                    << std::setprecision(0) << std::setw(7)
+                    << det.cfo_hz
+                    << " Hz\n";
+            }
+        }
+
+        /*
+         * Keep one sequence length of history for the next window.
+         */
+        window.erase(
+            window.begin(),
+            window.end() - static_cast<long>(zc_length));
+    }
+
+    cmd.stream_mode =
+        uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS;
+
+    rx_stream->issue_stream_cmd(cmd);
+
+    const auto ratio_stats = calculate_stats(ratios);
+
+    std::cout
+        << "\nResult over " << num_windows << " windows:\n";
+
+    std::cout
+        << "  detected      = " << num_detected
+        << " (" << std::fixed << std::setprecision(1)
+        << (num_windows
+                ? 100.0 * double(num_detected) / double(num_windows)
+                : 0.0)
+        << " %)\n";
+
+    std::cout << "  overflows     = " << num_overflow << "\n";
+
+    std::cout
+        << std::setprecision(2)
+        << "  peak/mean min = " << ratio_stats.min << "\n"
+        << "  peak/mean med = " << ratio_stats.median << "\n"
+        << "  peak/mean max = " << ratio_stats.max << "\n";
+
+    if (!cfos.empty())
+    {
+        const auto cfo_stats = calculate_stats(cfos);
+
+        std::cout
+            << std::setprecision(0)
+            << "  CFO median    = " << cfo_stats.median << " Hz"
+            << "  (" << std::setprecision(2)
+            << cfo_stats.median / cfg.frequency * 1e6
+            << " ppm)\n";
+    }
+
+    std::cout
+        << "\nInterpretation:\n";
+
+    if (num_detected == 0)
+    {
+        std::cout
+            << "Nothing detected. Either the transmitter was not\n"
+            << "running during this window, the cable/attenuation\n"
+            << "is wrong, or the two radios are not on the same\n"
+            << "frequency.\n";
+    }
+    else
+    {
+        std::cout
+            << "The peak marks where the sequence sits in this\n"
+            << "capture. Because the two hosts run on independent\n"
+            << "internal clocks, the offset is only meaningful\n"
+            << "within a capture -- it is NOT an absolute TX -> RX\n"
+            << "latency. The CFO figure is the carrier offset\n"
+            << "between the two TCXOs.\n";
+    }
+}
+
+
+// ============================================================
 // Complete experiment
 // ============================================================
 
@@ -1638,6 +2055,20 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             usrp,
             cfg);
     }
+    else if (mode == "zctx")
+    {
+        transmit_zadoff_chu(
+            usrp,
+            cfg,
+            argc >= 3 ? std::stod(argv[2]) : 10.0);
+    }
+    else if (mode == "zcrx")
+    {
+        receive_zadoff_chu(
+            usrp,
+            cfg,
+            argc >= 3 ? std::stod(argv[2]) : 10.0);
+    }
     else if (mode == "all")
     {
         run_all(
@@ -1660,6 +2091,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             << "  ./latency_test txmeta\n"
             << "  ./latency_test rxmeta\n"
             << "  ./latency_test zc\n"
+            << "  ./latency_test zctx [seconds]   (two-host: sender)\n"
+            << "  ./latency_test zcrx [seconds]   (two-host: receiver)\n"
             << "  ./latency_test all\n";
 
         return 1;

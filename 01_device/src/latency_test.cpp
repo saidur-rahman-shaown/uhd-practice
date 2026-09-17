@@ -1868,40 +1868,48 @@ void transmit_zadoff_chu(
     const auto t_start = clock_type::now();
 
     size_t bursts = 0;
+    size_t short_sends = 0;
 
-    uhd::tx_metadata_t md;
-
-    md.start_of_burst = true;
-    md.end_of_burst = false;
-    md.has_time_spec = false;
-
+    /*
+     * Each repetition is sent as a self-contained burst.
+     *
+     * Marking only the first packet as start-of-burst and never
+     * ending it makes the whole run one infinite burst: the first
+     * underflow then breaks the device's burst state and every
+     * later packet is rejected with a sequence error, so the radio
+     * goes quiet while send() still happily accepts samples.
+     * Independent bursts recover from an underflow on their own.
+     */
     while (std::chrono::duration<double>(
                clock_type::now() - t_start).count() < seconds)
     {
-        tx_stream->send(
-            burst.data(),
-            burst.size(),
-            md);
+        uhd::tx_metadata_t md;
 
-        md.start_of_burst = false;
+        md.start_of_burst = true;
+        md.end_of_burst = true;
+        md.has_time_spec = false;
+
+        const size_t sent =
+            tx_stream->send(
+                burst.data(),
+                burst.size(),
+                md,
+                1.0);
+
+        if (sent != burst.size())
+            ++short_sends;
 
         ++bursts;
     }
 
-    /*
-     * Close the burst cleanly so the device does not report an
-     * underflow for the trailing edge.
-     */
-    md.end_of_burst = true;
-
-    tx_stream->send(
-        burst.data(),
-        0,
-        md);
-
     std::cout
         << "Sent " << bursts << " bursts ("
-        << bursts * burst.size() << " samples).\n";
+        << bursts * burst.size() << " samples)";
+
+    if (short_sends)
+        std::cout << ", " << short_sends << " short sends";
+
+    std::cout << ".\n";
 }
 
 

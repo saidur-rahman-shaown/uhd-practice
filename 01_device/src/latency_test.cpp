@@ -10,6 +10,7 @@
 #include <numeric>
 #include <string>
 #include <thread>
+#include <fstream>
 #include <vector>
 
 using clock_type = std::chrono::steady_clock;
@@ -1676,6 +1677,158 @@ ZcSegmentedDetection detect_zadoff_chu_segmented(
 
 
 // ============================================================
+// Self-test for the segmented detector
+// ============================================================
+
+/*
+ * The coherent detector has zc_self_test(); this covers the
+ * segmented one on the same terms -- plant the sequence at a known
+ * offset, add noise, and check each segment count recovers it.
+ */
+void zc_segmented_self_test(double sample_rate)
+{
+    std::cout << "\nSegmented detector self-test:\n";
+
+    const size_t zc_length = 401;
+    const auto zc = make_zadoff_chu(zc_length, 25);
+
+    const size_t planted = 777;
+
+    std::vector<complex_t> capture(4080, complex_t(0.0f, 0.0f));
+
+    /*
+     * Weak signal plus noise, roughly the level seen on the cable.
+     */
+    std::srand(1);
+
+    for (auto& c : capture)
+    {
+        c = complex_t(
+            0.001f * (float(std::rand()) / RAND_MAX - 0.5f),
+            0.001f * (float(std::rand()) / RAND_MAX - 0.5f));
+    }
+
+    for (size_t k = 0; k < zc_length; ++k)
+        capture[planted + k] += 0.004f * zc[k];
+
+    for (size_t nseg : {1u, 2u, 4u, 8u, 16u})
+    {
+        const auto d =
+            detect_zadoff_chu_segmented(
+                capture, zc, sample_rate, nseg, 4.0);
+
+        std::cout
+            << "  segments = " << std::setw(2) << nseg
+            << " : peak/mean = "
+            << std::fixed << std::setprecision(2)
+            << std::setw(7) << d.peak_to_mean
+            << ", offset = " << std::setw(5) << d.peak_index
+            << (d.peak_index == planted ? "  (correct)" : "  (WRONG)")
+            << "\n";
+    }
+}
+
+
+// ============================================================
+// Dump one live capture window for offline comparison
+// ============================================================
+
+void zc_dump_window(
+    uhd::usrp::multi_usrp::sptr usrp,
+    const Config& cfg,
+    double rx_gain)
+{
+    usrp->set_rx_gain(rx_gain);
+
+    std::cout
+        << "\nDumping a window captured through the same"
+        << " continuous-stream loop as zcrx.\n"
+        << "RX gain = " << usrp->get_rx_gain() << " dB\n";
+
+    const size_t zc_length = 401;
+    const auto zc = make_zadoff_chu(zc_length, 25);
+
+    auto rx_stream =
+        usrp->get_rx_stream(uhd::stream_args_t("fc32", "sc16"));
+
+    uhd::stream_cmd_t cmd(
+        uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+
+    cmd.stream_now = true;
+    rx_stream->issue_stream_cmd(cmd);
+
+    std::vector<complex_t> chunk(rx_stream->get_max_num_samps());
+    std::vector<complex_t> window;
+
+    const size_t window_len = zc_length * 8;
+
+    size_t recv_calls = 0;
+    size_t overflows = 0;
+
+    while (window.size() < window_len)
+    {
+        uhd::rx_metadata_t md;
+
+        const size_t got =
+            rx_stream->recv(chunk.data(), chunk.size(), md, 1.0);
+
+        ++recv_calls;
+
+        if (md.error_code
+            == uhd::rx_metadata_t::ERROR_CODE_OVERFLOW)
+        {
+            ++overflows;
+            continue;
+        }
+
+        if (md.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE)
+            continue;
+
+        window.insert(
+            window.end(), chunk.begin(), chunk.begin() + got);
+    }
+
+    cmd.stream_mode =
+        uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS;
+
+    rx_stream->issue_stream_cmd(cmd);
+
+    double sum_sq = 0.0;
+
+    for (const auto& c : window)
+        sum_sq += std::norm(c);
+
+    std::cout
+        << "  samples   = " << window.size() << "\n"
+        << "  recvcalls = " << recv_calls << "\n"
+        << "  overflows = " << overflows << "\n"
+        << "  rms       = "
+        << std::sqrt(sum_sq / double(window.size())) << "\n";
+
+    for (size_t nseg : {1u, 4u, 16u})
+    {
+        const auto d =
+            detect_zadoff_chu_segmented(
+                window, zc, cfg.sample_rate, nseg, 4.0);
+
+        std::cout
+            << "  C++ detect nseg=" << std::setw(2) << nseg
+            << " : peak/mean = " << std::fixed
+            << std::setprecision(2) << d.peak_to_mean
+            << ", offset = " << d.peak_index << "\n";
+    }
+
+    std::ofstream f("/tmp/zc_window.f32", std::ios::binary);
+
+    f.write(
+        reinterpret_cast<const char*>(window.data()),
+        std::streamsize(window.size() * sizeof(complex_t)));
+
+    std::cout << "  wrote /tmp/zc_window.f32\n";
+}
+
+
+// ============================================================
 // 9a. Two-host ZC transmitter
 // ============================================================
 
@@ -1875,6 +2028,24 @@ void receive_zadoff_chu(
                 threshold);
 
         ++num_windows;
+
+        if (num_windows <= 15)
+        {
+            double sq = 0.0;
+
+            for (const auto& c : window)
+                sq += std::norm(c);
+
+            std::cout
+                << "  [win " << std::setw(3) << num_windows
+                << "] size=" << std::setw(5) << window.size()
+                << " rms=" << std::fixed << std::setprecision(5)
+                << std::sqrt(sq / double(window.size()))
+                << " peak/mean=" << std::setprecision(2)
+                << det.peak_to_mean
+                << " offset=" << det.peak_index
+                << "\n";
+        }
 
         ratios.push_back(det.peak_to_mean);
 
@@ -2099,6 +2270,15 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             cfg,
             argc >= 3 ? std::stod(argv[2]) : 10.0);
     }
+    else if (mode == "zcdump")
+    {
+        zc_dump_window(
+            usrp, cfg, argc >= 3 ? std::stod(argv[2]) : 50.0);
+    }
+    else if (mode == "zcseg")
+    {
+        zc_segmented_self_test(cfg.sample_rate);
+    }
     else if (mode == "zcrx")
     {
         receive_zadoff_chu(
@@ -2133,6 +2313,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             << "  ./latency_test zc\n"
             << "  ./latency_test zctx [seconds] [tx_gain]  (two-host: sender)\n"
             << "  ./latency_test zcrx [seconds] [segments] [threshold] [rx_gain]\n"
+            << "  ./latency_test zcseg            (offline detector self-test)\n"
+            << "  ./latency_test zcdump [rx_gain] (dump one live window)\n"
             << "  ./latency_test all\n";
 
         return 1;

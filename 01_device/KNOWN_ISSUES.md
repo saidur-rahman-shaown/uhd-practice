@@ -1,71 +1,69 @@
 # Known issues
 
-## The C++ transmitter in `latency_test.cpp` does not emit RF
+## Intermittent: the radio sometimes stops emitting until the device is reset
 
-**Status: open.** Affects every transmitting mode (`send`, `lead`, `txrx`,
-`txmeta`, `zc`, `zctx`).
+**Status: understood well enough to work around, root cause unknown.**
 
-`tx_stream->send()` returns full sample counts and paces correctly at the
-configured rate, `get_tx_freq()` / `get_tx_gain()` / `get_tx_rate()` all read
-back exactly what was requested, and the `lo_locked` sensor reads true -- but a
-receiver on the far end of the cable stays at the noise floor.
+The C++ transmitter *does* work. `zctx` on one NUC and `zcrx` on the other
+detect reliably, and three consecutive runs measured rms 0.02835 / 0.02837 /
+0.02850 at the far end. That figure matches `tools/zc_tx.py` (0.02838) to
+within a fraction of a percent, which is what a correct ZC burst at 25% duty
+and 0.7 amplitude should produce.
 
-### What has been ruled out
+But the B210 can get into a state where **nothing transmits at all**, and it
+survives restarting the program. In that state:
 
-Measured over the inter-host cable at 3515 MHz, 80 dB TX gain, with every other
-transmitter killed and verified gone before each reading:
+- `send()` still returns full sample counts and still paces at exactly the
+  configured rate,
+- `get_tx_freq()`, `get_tx_gain()` and `get_tx_rate()` read back what was asked,
+- the `lo_locked` sensor reads true,
+- and a receiver on the far end of the cable stays at the noise floor.
 
-| transmitter | result |
-|---|---|
-| nothing (baseline) | rms 0.00061 |
-| Python (`uhd` bindings) | **81.7 dB SNR** |
-| `/usr/libexec/uhd/examples/tx_waveforms` (distro C++ binary) | **81.9 dB SNR** |
-| UHD's own `tx_waveforms.cpp`, compiled locally with g++ 15.2 | **82.7 dB SNR** |
-| our minimal ~60-line C++ reproducer | rms 0.00061 (noise) |
+Nothing reports an error. The only way to notice is to measure the far end.
 
-So this is **not** a UHD install, library, ABI or toolchain problem: UHD's own
-source compiles here and transmits. Do not rebuild UHD from source -- it was
-tried as a hypothesis and disproved before spending the time.
+It is not a code defect, and it is not UHD. During one long bad spell, a
+minimal C++ reproducer, a rebuilt UHD example and our own app all stayed silent
+while Python transmitted; later, with no code change at all, the identical
+binaries reached 82-83 dB SNR. Several plausible-looking "fixes" were found and
+then disproved this way -- streamer/tune ordering, `tune_request_t(freq)` vs
+`tune_request_t(freq, lo_offset)`, explicit `stream_args.channels`, the
+buffer-pointer form passed to `send()`, a first-packet time spec, a settling
+delay, RX configuration, and send buffer size. **Each of these appeared to fix
+the problem and none of them did.** Do not rebuild UHD over this; UHD's own
+`tx_waveforms.cpp` compiled locally transmits fine here.
 
-Also individually ruled out, each tested in isolation against a verified
-baseline:
+The bad spells correlated with repeatedly killing transmitting processes
+mid-stream, so a plausible but unproven guess is that an unclean shutdown
+latches the TX front end off. If it happens, power-cycle the B210 (unplug the
+USB) before changing any code.
 
-- creating the TX streamer before vs. after tuning
-- setting `stream_args.channels` explicitly
-- passing `send()` a `std::vector<T*>` rather than a bare pointer
-- a time spec on the first packet, plus `set_time_now(0)`
-- a one second settling delay before streaming
-- configuring RX alongside TX
-- send buffer size (4k, 10k, 16k samples)
-- `set_tx_rate` with and without a channel index
+### How to tell, in one command
 
-### Measurement discipline
+With a transmitter running on the other box:
 
-Several wrong conclusions in this file's history came from a previous
-transmitter still running during a measurement. Before trusting any reading:
+    python3 /tmp/ports.py check        # rms ~0.028 for ZC, ~0.060 for a CW tone
 
-1. kill every transmitter and confirm zero survivors,
-2. measure a baseline and check it is at the noise floor,
-3. only then start the program under test and confirm it is alive.
+Noise floor is rms ~0.00061. If you see that while something is transmitting,
+the radio is in the bad state -- reset it rather than debugging the code.
 
-A CW tone reading a strong SNR at a frequency you did not intend is the
-signature of a stale transmitter. Note also that `pkill -f foo` matches the ssh
-shell running it and kills the session -- use `pkill -f "[f]oo"`.
+## Measurement discipline
 
-### Workaround
+Most of the wrong conclusions above came from sloppy measurement, so:
 
-Use `tools/zc_tx.py` as the transmitter. The receive side (`zcrx`) is correct
-and verified: with the Python transmitter it detects reliably, reporting
-peak-to-mean 76-108 with correlation offsets scattered across the window and a
-stable ~280 Hz carrier offset between the two TCXOs.
+1. Kill every transmitter and confirm zero survivors.
+2. Measure a baseline and check it is at the noise floor (~0.00061).
+3. Only then start the program under test, and confirm it is alive.
 
-    # transmitting box
-    ./tools/zc_tx.py 40 80
-    # receiving box
-    ./build/latency_test zcrx 15 4 4.0 50
+A strong CW tone at a frequency your program does not generate means a stale
+transmitter is still running. Note `pkill -f foo` matches the ssh shell running
+it and kills your session -- use `pkill -f "[f]oo"`.
 
-### Next step
+Also beware the **stream-startup transient**: the first window after any stream
+start correlates against anything and fakes a detection at offset 0-12 with
+peak-to-mean 7-23. Discard roughly the first 100k samples before deciding
+whether a signal is really present.
 
-Bisect from UHD's `tx_waveforms.cpp`, which is known to work here, by deleting
-pieces until it stops transmitting, rather than by adding pieces to the minimal
-reproducer.
+## Use TX gain 80
+
+At 60 dB and below the signal is too weak to detect over the cable and
+attenuator. This is the first thing to check if nothing is being received.

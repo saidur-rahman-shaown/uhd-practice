@@ -18,11 +18,11 @@ if(NOT TARGET UHD::uhd)
     target_link_libraries(UHD::uhd INTERFACE ${UHD_LIBRARIES})
 endif()
 
-add_executable(device_info
-    src/device_info.cpp
+add_executable(latency_test
+    src/latency_test.cpp
 )
 
-target_link_libraries(device_info
+target_link_libraries(latency_test
     PRIVATE
     UHD::uhd
 )

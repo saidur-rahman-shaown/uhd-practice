@@ -1761,12 +1761,27 @@ void receive_zadoff_chu(
     const Config& cfg,
     double seconds,
     size_t num_segments = 4,
-    double threshold = 4.0)
+    double threshold = 4.0,
+    double rx_gain = 50.0)
 {
     std::cout << "\n";
     std::cout << "====================================================\n";
     std::cout << "9b. ZADOFF-CHU RECEIVER (two-host)\n";
     std::cout << "====================================================\n";
+
+    /*
+     * The 30 dB default leaves the signal only a few dB above the
+     * 12-bit ADC quantisation floor. A CW tone still shows up
+     * because an FFT gives ~45 dB of processing gain, but a 401
+     * sample correlation only gives ~26 dB and loses it. Raise the
+     * gain so the correlator has something to work with.
+     */
+    usrp->set_rx_gain(rx_gain);
+
+    std::cout
+        << "RX gain set to "
+        << usrp->get_rx_gain()
+        << " dB\n";
 
     const size_t zc_length = 401;
     const size_t zc_root = 25;
@@ -2091,7 +2106,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             cfg,
             argc >= 3 ? std::stod(argv[2]) : 10.0,
             argc >= 4 ? static_cast<size_t>(std::stoul(argv[3])) : 4,
-            argc >= 5 ? std::stod(argv[4]) : 4.0);
+            argc >= 5 ? std::stod(argv[4]) : 4.0,
+            argc >= 6 ? std::stod(argv[5]) : 50.0);
     }
     else if (mode == "all")
     {
@@ -2116,7 +2132,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             << "  ./latency_test rxmeta\n"
             << "  ./latency_test zc\n"
             << "  ./latency_test zctx [seconds] [tx_gain]  (two-host: sender)\n"
-            << "  ./latency_test zcrx [seconds] [segments] [threshold]\n"
+            << "  ./latency_test zcrx [seconds] [segments] [threshold] [rx_gain]\n"
             << "  ./latency_test all\n";
 
         return 1;

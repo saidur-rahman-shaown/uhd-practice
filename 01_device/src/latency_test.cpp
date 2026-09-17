@@ -1759,7 +1759,9 @@ void transmit_zadoff_chu(
 void receive_zadoff_chu(
     uhd::usrp::multi_usrp::sptr usrp,
     const Config& cfg,
-    double seconds)
+    double seconds,
+    size_t num_segments = 4,
+    double threshold = 4.0)
 {
     std::cout << "\n";
     std::cout << "====================================================\n";
@@ -1808,7 +1810,8 @@ void receive_zadoff_chu(
     std::cout
         << "Listening for "
         << seconds
-        << " s (detector: 16 segments, threshold 6.0)...\n\n";
+        << " s (detector: " << num_segments
+        << " segments, threshold " << threshold << ")...\n\n";
 
     while (std::chrono::duration<double>(
                clock_type::now() - t_start).count() < seconds)
@@ -1852,7 +1855,9 @@ void receive_zadoff_chu(
             detect_zadoff_chu_segmented(
                 window,
                 zc,
-                cfg.sample_rate);
+                cfg.sample_rate,
+                num_segments,
+                threshold);
 
         ++num_windows;
 
@@ -2084,7 +2089,9 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
         receive_zadoff_chu(
             usrp,
             cfg,
-            argc >= 3 ? std::stod(argv[2]) : 10.0);
+            argc >= 3 ? std::stod(argv[2]) : 10.0,
+            argc >= 4 ? static_cast<size_t>(std::stoul(argv[3])) : 4,
+            argc >= 5 ? std::stod(argv[4]) : 4.0);
     }
     else if (mode == "all")
     {
@@ -2109,7 +2116,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             << "  ./latency_test rxmeta\n"
             << "  ./latency_test zc\n"
             << "  ./latency_test zctx [seconds] [tx_gain]  (two-host: sender)\n"
-            << "  ./latency_test zcrx [seconds]   (two-host: receiver)\n"
+            << "  ./latency_test zcrx [seconds] [segments] [threshold]\n"
             << "  ./latency_test all\n";
 
         return 1;

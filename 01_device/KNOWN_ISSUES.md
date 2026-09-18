@@ -32,10 +32,31 @@ delay, RX configuration, and send buffer size. **Each of these appeared to fix
 the problem and none of them did.** Do not rebuild UHD over this; UHD's own
 `tx_waveforms.cpp` compiled locally transmits fine here.
 
-The bad spells correlated with repeatedly killing transmitting processes
-mid-stream, so a plausible but unproven guess is that an unclean shutdown
-latches the TX front end off. If it happens, power-cycle the B210 (unplug the
-USB) before changing any code.
+### The unclean-shutdown guess was wrong
+
+An earlier version of this file blamed killing transmitting processes
+mid-stream. That was tested on 2026-09-18 and **disproved**: after a SIGKILL
+mid-burst, and again after five rapid start/kill cycles, a fresh `zctx` still
+transmitted normally (rms 0.02847 and 0.02839). The trigger is still unknown,
+and the failure could not be reproduced on demand at all that day -- including
+from a cold start after the boxes had been idle overnight.
+
+One thing never recorded during a bad spell was device temperature. The long
+failure ran after hours of continuous TX at 80 dB gain, so thermal protection
+is a live but untested hypothesis. Idle baseline for comparison is
+`tx temp = 44.9 C` (read via `get_tx_sensor("temp", 0)`).
+
+### If it comes back, capture this before changing anything
+
+The failure is the only chance to identify it, so do not start editing:
+
+1. Read `tx temp` and compare with the ~45 C idle baseline.
+2. With our app still silent, immediately run
+   `/usr/libexec/uhd/examples/tx_waveforms --freq 3515e6 --rate 1e6 --gain 80
+   --wave-type SINE --wave-freq 100e3 --ampl 0.7` and measure. If that
+   transmits while ours does not, the split is real and reproducible at that
+   moment -- which is the one condition under which the cause can be bisected.
+3. Only then power-cycle the B210 (unplug the USB) to recover.
 
 ### How to tell, in one command
 

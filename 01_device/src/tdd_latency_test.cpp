@@ -610,6 +610,442 @@ void run_tdd_alternating(
 
 
 // ============================================================
+// 13. NR-like staged feasibility test
+// ============================================================
+
+/*
+ * Can this B210 and host sustain a 30 kHz SCS, 20 MHz-class NR TDD
+ * waveform -- 30.72 MS/s, both directions at once, with 0.5 ms slot
+ * boundaries that do not drift?
+ *
+ * Run in stages, because a failure at 30.72 MS/s means nothing until
+ * you know which part gave way:
+ *
+ *   txonly  transmit only, to find the transmit ceiling
+ *   rxonly  receive only, to find the receive ceiling
+ *   both    both at once, which is the USB and host test
+ *   tdd     both at once with the slot structure on top
+ *
+ * Note that 30.72 MS/s is not a hard requirement for a 20 MHz
+ * carrier -- the rate follows from numerology, FFT size and RB
+ * allocation. It is used here because it is the conventional rate
+ * for that configuration and therefore a realistic target.
+ *
+ * Every figure below is measured, not configured. The requested
+ * rate is what UHD was asked for; the achieved rate is derived from
+ * device timestamps, and the host rate from wall clock. Slot
+ * boundaries are checked by looking for discontinuities in the
+ * receive timestamps: contiguous samples mean exact boundaries,
+ * because a slot edge is only a sample count from the anchor.
+ */
+
+struct NrStats
+{
+    // transmit
+    size_t tx_underflow = 0, tx_late = 0, tx_seq = 0;
+    size_t tx_ack = 0, tx_other = 0;
+    size_t tx_sends = 0, tx_short = 0;
+    unsigned long long tx_samples = 0;
+
+    // receive
+    size_t rx_overflow = 0, rx_timeout = 0, rx_late_cmd = 0;
+    size_t rx_bad = 0, rx_other = 0, rx_calls = 0;
+    unsigned long long rx_samples = 0;
+
+    // continuity
+    size_t rx_gaps = 0;
+    double rx_worst_gap_us = 0.0;
+    double rx_first_t = -1.0, rx_last_t = -1.0;
+    unsigned long long rx_last_n = 0;
+};
+
+
+void print_nr_stats(
+    const std::string& stage,
+    const NrStats& s,
+    double requested_rate,
+    double wall,
+    double slot_ms,
+    bool did_tx,
+    bool did_rx)
+{
+    std::cout << "\n--- " << stage << " ---\n";
+
+    std::cout << std::fixed;
+
+    if (did_tx)
+    {
+        std::cout
+            << "  TX  sends       = " << s.tx_sends << "\n"
+            << "      samples     = " << s.tx_samples << "\n"
+            << "      short sends = " << s.tx_short << "\n"
+            << "      underflow   = " << s.tx_underflow << "\n"
+            << "      late        = " << s.tx_late << "\n"
+            << "      seq error   = " << s.tx_seq << "\n"
+            << "      burst ACK   = " << s.tx_ack << "\n"
+            << "      other       = " << s.tx_other << "\n"
+            << "      host rate   = " << std::setprecision(4)
+            << double(s.tx_samples) / wall / 1e6 << " MS/s\n";
+    }
+
+    if (did_rx)
+    {
+        std::cout
+            << "  RX  recv calls  = " << s.rx_calls << "\n"
+            << "      samples     = " << s.rx_samples << "\n"
+            << "      overflow    = " << s.rx_overflow << "\n"
+            << "      timeout     = " << s.rx_timeout << "\n"
+            << "      late cmd    = " << s.rx_late_cmd << "\n"
+            << "      bad packet  = " << s.rx_bad << "\n"
+            << "      other       = " << s.rx_other << "\n"
+            << "      host rate   = " << std::setprecision(4)
+            << double(s.rx_samples) / wall / 1e6 << " MS/s\n";
+
+        if (s.rx_first_t >= 0.0 && s.rx_last_t > s.rx_first_t)
+        {
+            const double span =
+                (s.rx_last_t + double(s.rx_last_n) / requested_rate)
+                - s.rx_first_t;
+
+            std::cout
+                << "      device rate = " << std::setprecision(6)
+                << double(s.rx_samples) / span / 1e6 << " MS/s"
+                << "  (over " << std::setprecision(3) << span << " s)\n";
+        }
+
+        std::cout
+            << "      timestamp gaps = " << s.rx_gaps;
+
+        if (s.rx_gaps)
+        {
+            std::cout
+                << ", worst " << std::setprecision(2)
+                << s.rx_worst_gap_us << " us ("
+                << std::setprecision(0)
+                << s.rx_worst_gap_us * 1e-6 * requested_rate
+                << " samples)";
+        }
+
+        std::cout << "\n";
+
+        const double slots =
+            double(s.rx_samples) / (requested_rate * slot_ms / 1e3);
+
+        std::cout
+            << "      slots covered  = " << std::setprecision(1)
+            << slots << "\n";
+    }
+}
+
+
+void run_nr_stage(
+    uhd::usrp::multi_usrp::sptr usrp,
+    const Config& cfg_in,
+    const std::string& stage,
+    double rate,
+    double seconds,
+    double slot_ms,
+    double guard_frac,
+    double tx_gain)
+{
+    const bool did_tx = (stage != "rxonly");
+    const bool did_rx = (stage != "txonly");
+    const bool tdd    = (stage == "tdd");
+
+    Config cfg = cfg_in;
+
+    usrp->set_tx_gain(tx_gain);
+
+    if (did_tx) usrp->set_tx_rate(rate);
+    if (did_rx) usrp->set_rx_rate(rate);
+
+    const double actual_tx_rate = usrp->get_tx_rate();
+    const double actual_rx_rate = usrp->get_rx_rate();
+
+    cfg.sample_rate = did_rx ? actual_rx_rate : actual_tx_rate;
+
+    const size_t slot_samples =
+        static_cast<size_t>(cfg.sample_rate * slot_ms / 1e3);
+
+    const size_t guard_samples =
+        static_cast<size_t>(double(slot_samples) * guard_frac);
+
+    std::cout
+        << "\n====================================================\n"
+        << "STAGE: " << stage << "\n"
+        << "====================================================\n"
+        << std::fixed << std::setprecision(6)
+        << "  requested rate = " << rate / 1e6 << " MS/s\n"
+        << "  UHD gave TX    = " << actual_tx_rate / 1e6 << " MS/s\n"
+        << "  UHD gave RX    = " << actual_rx_rate / 1e6 << " MS/s\n"
+        << std::setprecision(3)
+        << "  slot           = " << slot_ms << " ms = "
+        << slot_samples << " samples\n";
+
+    if (tdd)
+    {
+        std::cout
+            << "  guard          = " << guard_samples << " samples ("
+            << double(guard_samples) / cfg.sample_rate * 1e6 << " us)\n"
+            << "  TX region      = " << slot_samples - guard_samples
+            << " samples ("
+            << double(slot_samples - guard_samples) / cfg.sample_rate * 1e6
+            << " us)\n";
+    }
+
+    std::cout << "  duration       = " << seconds << " s\n";
+
+    NrStats st{};
+
+    usrp->set_time_now(uhd::time_spec_t(0.0));
+
+    const uhd::time_spec_t start(0.2);
+
+    uhd::tx_streamer::sptr tx;
+    uhd::rx_streamer::sptr rx;
+
+    if (did_tx) tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", "sc16"));
+    if (did_rx) rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", "sc16"));
+
+    /*
+     * Build the transmit buffer. For the plain streaming stages it is
+     * a continuous tone; for tdd it carries the slot structure, with
+     * the guard as silence at the end of each transmitting slot and
+     * the whole listening slot silent.
+     */
+    std::vector<complex_t> tx_buffer;
+
+    if (did_tx)
+    {
+        const auto tone =
+            make_waveform(slot_samples, cfg.sample_rate, 100e3);
+
+        if (tdd)
+        {
+            std::vector<complex_t> pair;
+            pair.reserve(slot_samples * 2);
+
+            for (size_t n = 0; n < slot_samples; ++n)
+                pair.push_back(
+                    n < slot_samples - guard_samples
+                        ? tone[n] * 0.7f
+                        : complex_t(0.0f, 0.0f));
+
+            for (size_t n = 0; n < slot_samples; ++n)
+                pair.push_back(complex_t(0.0f, 0.0f));
+
+            const size_t reps =
+                std::max<size_t>(1, 60000 / pair.size());
+
+            for (size_t r = 0; r < reps; ++r)
+                tx_buffer.insert(tx_buffer.end(), pair.begin(), pair.end());
+        }
+        else
+        {
+            const size_t reps =
+                std::max<size_t>(1, 60000 / slot_samples);
+
+            for (size_t r = 0; r < reps; ++r)
+                for (size_t n = 0; n < slot_samples; ++n)
+                    tx_buffer.push_back(tone[n] * 0.7f);
+        }
+
+        std::cout
+            << "  TX buffer      = " << tx_buffer.size()
+            << " samples per send\n";
+    }
+
+    std::atomic<bool> running{true};
+
+    std::thread tx_thread;
+
+    if (did_tx)
+    {
+        tx_thread = std::thread([&]() {
+            uhd::tx_metadata_t md;
+            md.start_of_burst = true;
+            md.end_of_burst   = false;
+            md.has_time_spec  = true;
+            md.time_spec      = start;
+
+            const auto t0 = clock_type::now();
+
+            while (running.load()
+                   && std::chrono::duration<double>(
+                          clock_type::now() - t0).count() < seconds)
+            {
+                const size_t sent =
+                    tx->send(tx_buffer.data(), tx_buffer.size(), md, 1.0);
+
+                if (sent != tx_buffer.size()) ++st.tx_short;
+
+                st.tx_samples += sent;
+                ++st.tx_sends;
+
+                md.start_of_burst = false;
+                md.has_time_spec  = false;
+
+                uhd::async_metadata_t am;
+                while (tx->recv_async_msg(am, 0.0))
+                {
+                    switch (am.event_code)
+                    {
+                        case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW:
+                        case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW_IN_PACKET:
+                            ++st.tx_underflow; break;
+                        case uhd::async_metadata_t::EVENT_CODE_TIME_ERROR:
+                            ++st.tx_late; break;
+                        case uhd::async_metadata_t::EVENT_CODE_SEQ_ERROR:
+                        case uhd::async_metadata_t::EVENT_CODE_SEQ_ERROR_IN_BURST:
+                            ++st.tx_seq; break;
+                        case uhd::async_metadata_t::EVENT_CODE_BURST_ACK:
+                            ++st.tx_ack; break;
+                        default:
+                            ++st.tx_other; break;
+                    }
+                }
+            }
+
+            md.end_of_burst = true;
+            tx->send(tx_buffer.data(), 0, md);
+        });
+    }
+
+    const auto wall_t0 = clock_type::now();
+
+    if (did_rx)
+    {
+        uhd::stream_cmd_t cmd(
+            uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+
+        cmd.stream_now = false;
+        cmd.time_spec  = start;
+        rx->issue_stream_cmd(cmd);
+
+        std::vector<complex_t> buf(rx->get_max_num_samps());
+
+        bool have_prev = false;
+        double prev_t = 0.0;
+        size_t prev_n = 0;
+
+        while (std::chrono::duration<double>(
+                   clock_type::now() - wall_t0).count() < seconds)
+        {
+            uhd::rx_metadata_t md;
+
+            const size_t got = rx->recv(buf.data(), buf.size(), md, 1.0);
+
+            ++st.rx_calls;
+
+            switch (md.error_code)
+            {
+                case uhd::rx_metadata_t::ERROR_CODE_NONE: break;
+                case uhd::rx_metadata_t::ERROR_CODE_OVERFLOW:
+                    ++st.rx_overflow; have_prev = false; continue;
+                case uhd::rx_metadata_t::ERROR_CODE_TIMEOUT:
+                    ++st.rx_timeout; have_prev = false; continue;
+                case uhd::rx_metadata_t::ERROR_CODE_LATE_COMMAND:
+                    ++st.rx_late_cmd; have_prev = false; continue;
+                case uhd::rx_metadata_t::ERROR_CODE_BAD_PACKET:
+                    ++st.rx_bad; have_prev = false; continue;
+                default:
+                    ++st.rx_other; have_prev = false; continue;
+            }
+
+            if (got == 0) continue;
+
+            st.rx_samples += got;
+
+            if (md.has_time_spec)
+            {
+                const double t = md.time_spec.get_real_secs();
+
+                if (st.rx_first_t < 0.0) st.rx_first_t = t;
+
+                st.rx_last_t = t;
+                st.rx_last_n = got;
+
+                if (have_prev)
+                {
+                    const double expected =
+                        prev_t + double(prev_n) / cfg.sample_rate;
+
+                    const double err = std::fabs(t - expected);
+
+                    /*
+                     * Half a sample of slack: anything larger means
+                     * samples went missing, and a slot edge derived
+                     * from a sample count would have moved.
+                     */
+                    if (err > 0.5 / cfg.sample_rate)
+                    {
+                        ++st.rx_gaps;
+                        st.rx_worst_gap_us =
+                            std::max(st.rx_worst_gap_us, err * 1e6);
+                    }
+                }
+
+                prev_t = t;
+                prev_n = got;
+                have_prev = true;
+            }
+        }
+
+        cmd.stream_mode = uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS;
+        rx->issue_stream_cmd(cmd);
+
+        uhd::rx_metadata_t flush;
+        while (rx->recv(buf.data(), buf.size(), flush, 0.1) > 0) {}
+    }
+    else
+    {
+        std::this_thread::sleep_for(
+            std::chrono::duration<double>(seconds));
+    }
+
+    running.store(false);
+
+    if (tx_thread.joinable()) tx_thread.join();
+
+    /*
+     * Collect any async reports that arrived after the loop ended.
+     */
+    if (did_tx)
+    {
+        uhd::async_metadata_t am;
+        while (tx->recv_async_msg(am, 0.1))
+        {
+            switch (am.event_code)
+            {
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW:
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW_IN_PACKET:
+                    ++st.tx_underflow; break;
+                case uhd::async_metadata_t::EVENT_CODE_TIME_ERROR:
+                    ++st.tx_late; break;
+                default: break;
+            }
+        }
+    }
+
+    const double wall =
+        std::chrono::duration<double>(
+            clock_type::now() - wall_t0).count();
+
+    print_nr_stats(stage, st, cfg.sample_rate, wall, slot_ms, did_tx, did_rx);
+
+    const bool clean =
+        st.tx_underflow == 0 && st.tx_late == 0 && st.tx_seq == 0
+        && st.rx_overflow == 0 && st.rx_timeout == 0
+        && st.rx_bad == 0 && st.rx_gaps == 0 && st.tx_short == 0;
+
+    std::cout
+        << "\n  VERDICT: " << (clean ? "PASS" : "FAIL")
+        << "  (" << stage << " at " << std::setprecision(3)
+        << cfg.sample_rate / 1e6 << " MS/s)\n";
+}
+
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -653,6 +1089,29 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             argc >= 6 ? std::stod(argv[5]) : 80.0,
             argc >= 7 ? std::stod(argv[6]) : 0.0);
     }
+    else if (mode == "nr")
+    {
+        const std::string stage = argc >= 3 ? argv[2] : "all";
+
+        const double rate  = argc >= 4 ? std::stod(argv[3]) : 30.72e6;
+        const double secs  = argc >= 5 ? std::stod(argv[4]) : 60.0;
+        const double slot  = argc >= 6 ? std::stod(argv[5]) : 0.5;
+        const double guard = argc >= 7 ? std::stod(argv[6]) : 0.1;
+        const double gain  = argc >= 8 ? std::stod(argv[7]) : 80.0;
+
+        if (stage == "all")
+        {
+            for (const std::string st :
+                 {"txonly", "rxonly", "both", "tdd"})
+            {
+                run_nr_stage(usrp, cfg, st, rate, secs, slot, guard, gain);
+            }
+        }
+        else
+        {
+            run_nr_stage(usrp, cfg, stage, rate, secs, slot, guard, gain);
+        }
+    }
     else if (mode == "both")
     {
         run_tdd_slots(usrp, cfg, 1.0, 1000, 20.0);
@@ -666,6 +1125,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             << "  ./tdd_latency_test slots  [slot_ms] [slots] [pipeline_ms]\n"
             << "  ./tdd_latency_test stream [slot_ms] [seconds] [duty]\n"
             << "  ./tdd_latency_test alt    [slot_ms] [seconds] [guard_frac] [tx_gain] [rate]\n"
+            << "  ./tdd_latency_test nr <txonly|rxonly|both|tdd|all>\n"
+            << "        [rate] [seconds] [slot_ms] [guard] [tx_gain]\n"
             << "  ./tdd_latency_test both\n";
 
         return 1;

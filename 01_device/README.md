@@ -165,6 +165,42 @@ Sustained rate with both directions running at once, 0.5 ms slots:
 | 5, 15, 20, 25 MS/s | clean |
 | 30 MS/s | underflows |
 
+### NR feasibility: 30 kHz SCS, 20 MHz-class, 30.72 MS/s
+
+**Written but not yet run** -- the lab network was unreachable when this was
+added, so it has never been compiled. Build it before trusting it.
+
+```bash
+./build/tdd_latency_test nr all 30.72e6 60 0.5 0.1 80
+#                        ^stage ^rate   ^s ^slot ^guard ^gain
+```
+
+Runs four stages in order, because a failure at 30.72 MS/s means nothing until
+you know which part gave way:
+
+| stage | what it isolates |
+|---|---|
+| `txonly` | transmit ceiling |
+| `rxonly` | receive ceiling |
+| `both`   | USB and host with both directions live |
+| `tdd`    | the above plus the 0.5 ms slot structure |
+
+Any stage can be run alone, e.g. `nr both 30.72e6 60`.
+
+At 30.72 MS/s and a 0.5 ms slot the geometry is 15360 samples per slot, 1536
+guard, 13824 transmitting -- which is 450 us of signal and 50 us of guard.
+
+Every figure is measured rather than configured. The requested rate is what UHD
+was asked for, the achieved rate is what UHD granted, the device rate is
+derived from receive timestamps, and the host rate from wall clock. Slot
+boundaries are checked by looking for discontinuities in the receive
+timestamps: contiguous samples mean the boundaries are exact, because a slot
+edge is only a sample count from the anchor. Each stage ends in a PASS or FAIL.
+
+Note that 30.72 MS/s is not a hard requirement for a 20 MHz carrier -- the rate
+follows from numerology, FFT size and RB allocation. It is used because it is
+the conventional rate for that configuration, and therefore a realistic target.
+
 ## Is anything actually being transmitted?
 
 The check that settles device-versus-code arguments. On the receiving box:

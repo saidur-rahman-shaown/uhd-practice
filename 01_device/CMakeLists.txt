@@ -35,3 +35,12 @@ target_link_libraries(tdd_latency_test
     PRIVATE
     UHD::uhd
 )
+
+add_executable(async_events
+    src/async_events.cpp
+)
+
+target_link_libraries(async_events
+    PRIVATE
+    UHD::uhd
+)

@@ -16,7 +16,8 @@ ssh shaown@192.168.0.102                 # or .103
 cd ~/uhd-practice/01_device
 git pull
 cmake --build build                      # first time: cmake -B build -G Ninja .
-                                         # builds latency_test and tdd_latency_test
+                                         # builds latency_test, tdd_latency_test,
+                                         # and async_events
 ```
 
 ## Single box, no RF needed
@@ -68,6 +69,40 @@ ssh shaown@192.168.0.103 'cd ~/uhd-practice/01_device && \
 
 `setsid nohup ... </dev/null &` matters: without it the sender dies when ssh
 returns.
+
+## Learning the status characters
+
+While streaming, UHD writes a single character to stderr for each problem it
+notices, inline and with no newline:
+
+| char | meaning |
+|---|---|
+| `U` | underflow -- the transmitter ran out of samples mid-burst |
+| `L` | late packet -- a burst arrived after its scheduled time |
+| `S` | sequence error -- the device rejected a packet as out of order |
+| `O` | overflow -- the receiver outran the host |
+| `D` | dropped packet |
+
+Seeing none of them is the healthy case, which makes them hard to learn from:
+you normally meet them by accident. `async_events` provokes each one on demand
+and prints the matching async message underneath, so the character and its
+meaning appear together.
+
+```bash
+./build/async_events ack         # clean burst -- nothing printed, 10/10 ACK
+./build/async_events late        # L, and TIME_ERROR
+./build/async_events underflow   # U, and UNDERFLOW
+./build/async_events overflow    # O, and ERROR_CODE_OVERFLOW
+./build/async_events latecmd     # LATE_COMMAND on the receive side
+./build/async_events all
+```
+
+The `late` demo is the one worth reading twice: `send()` reports success for
+all 10 bursts while the device reports `TIME_ERROR` for all 10. `send()`
+returning only means the host handed the samples over.
+
+The overflow demo raises the sample rate to 20 MS/s for its duration -- at
+1 MS/s the buffers absorb the stall and nothing is lost.
 
 ## TDD slot timing
 

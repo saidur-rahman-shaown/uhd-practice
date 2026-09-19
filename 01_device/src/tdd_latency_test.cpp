@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <atomic>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -641,6 +642,9 @@ void run_tdd_alternating(
 
 struct NrStats
 {
+    // events during the settling window, kept apart from the verdict
+    size_t warm_tx_events = 0, warm_rx_events = 0;
+
     // transmit
     size_t tx_underflow = 0, tx_late = 0, tx_seq = 0;
     size_t tx_ack = 0, tx_other = 0;
@@ -746,7 +750,8 @@ void run_nr_stage(
     double seconds,
     double slot_ms,
     double guard_frac,
-    double tx_gain)
+    double tx_gain,
+    double warmup)
 {
     const bool did_tx = (stage != "rxonly");
     const bool did_rx = (stage != "txonly");
@@ -755,6 +760,32 @@ void run_nr_stage(
     Config cfg = cfg_in;
 
     usrp->set_tx_gain(tx_gain);
+
+    /*
+     * The B210 makes its sample rate by dividing the master clock,
+     * which defaults to 32 MHz. Asking for 30.72 MS/s against that
+     * clock silently yields 32 MS/s instead -- a rate you did not
+     * ask for, tested as though you had.
+     *
+     * NR rates are not divisors of 32 MHz, so the master clock has
+     * to be moved to match. Driving it at the sample rate itself
+     * gives a divisor of one, which is exact.
+     */
+    const double want_mcr = rate;
+
+    if (std::fabs(usrp->get_master_clock_rate() - want_mcr) > 1.0)
+    {
+        try
+        {
+            usrp->set_master_clock_rate(want_mcr);
+        }
+        catch (const std::exception& e)
+        {
+            std::cout
+                << "  NOTE: master clock " << want_mcr / 1e6
+                << " MHz rejected (" << e.what() << ")\n";
+        }
+    }
 
     if (did_tx) usrp->set_tx_rate(rate);
     if (did_rx) usrp->set_rx_rate(rate);
@@ -775,6 +806,8 @@ void run_nr_stage(
         << "STAGE: " << stage << "\n"
         << "====================================================\n"
         << std::fixed << std::setprecision(6)
+        << "  master clock   = "
+        << usrp->get_master_clock_rate() / 1e6 << " MHz\n"
         << "  requested rate = " << rate / 1e6 << " MS/s\n"
         << "  UHD gave TX    = " << actual_tx_rate / 1e6 << " MS/s\n"
         << "  UHD gave RX    = " << actual_rx_rate / 1e6 << " MS/s\n"
@@ -793,7 +826,9 @@ void run_nr_stage(
             << " us)\n";
     }
 
-    std::cout << "  duration       = " << seconds << " s\n";
+    std::cout
+        << "  duration       = " << seconds << " s"
+        << "  (first " << warmup << " s excluded as settling)\n";
 
     NrStats st{};
 
@@ -834,16 +869,27 @@ void run_nr_stage(
             for (size_t n = 0; n < slot_samples; ++n)
                 pair.push_back(complex_t(0.0f, 0.0f));
 
+            /*
+             * Size the buffer by time, not by a fixed sample count:
+             * at 30.72 MS/s a fixed 60k samples is barely 2 ms of
+             * data, which is not enough to ride out host jitter.
+             */
+            const size_t target =
+                static_cast<size_t>(cfg.sample_rate * 0.010);
+
             const size_t reps =
-                std::max<size_t>(1, 60000 / pair.size());
+                std::max<size_t>(1, target / pair.size());
 
             for (size_t r = 0; r < reps; ++r)
                 tx_buffer.insert(tx_buffer.end(), pair.begin(), pair.end());
         }
         else
         {
+            const size_t target =
+                static_cast<size_t>(cfg.sample_rate * 0.010);
+
             const size_t reps =
-                std::max<size_t>(1, 60000 / slot_samples);
+                std::max<size_t>(1, target / slot_samples);
 
             for (size_t r = 0; r < reps; ++r)
                 for (size_t n = 0; n < slot_samples; ++n)
@@ -874,6 +920,10 @@ void run_nr_stage(
                    && std::chrono::duration<double>(
                           clock_type::now() - t0).count() < seconds)
             {
+                const bool warm =
+                    std::chrono::duration<double>(
+                        clock_type::now() - t0).count() < warmup;
+
                 const size_t sent =
                     tx->send(tx_buffer.data(), tx_buffer.size(), md, 1.0);
 
@@ -888,6 +938,14 @@ void run_nr_stage(
                 uhd::async_metadata_t am;
                 while (tx->recv_async_msg(am, 0.0))
                 {
+                    if (warm
+                        && am.event_code
+                               != uhd::async_metadata_t::EVENT_CODE_BURST_ACK)
+                    {
+                        ++st.warm_tx_events;
+                        continue;
+                    }
+
                     switch (am.event_code)
                     {
                         case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW:
@@ -937,6 +995,18 @@ void run_nr_stage(
 
             ++st.rx_calls;
 
+            const bool warm =
+                std::chrono::duration<double>(
+                    clock_type::now() - wall_t0).count() < warmup;
+
+            if (warm
+                && md.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE)
+            {
+                ++st.warm_rx_events;
+                have_prev = false;
+                continue;
+            }
+
             switch (md.error_code)
             {
                 case uhd::rx_metadata_t::ERROR_CODE_NONE: break;
@@ -977,7 +1047,7 @@ void run_nr_stage(
                      * samples went missing, and a slot edge derived
                      * from a sample count would have moved.
                      */
-                    if (err > 0.5 / cfg.sample_rate)
+                    if (err > 0.5 / cfg.sample_rate && !warm)
                     {
                         ++st.rx_gaps;
                         st.rx_worst_gap_us =
@@ -1039,6 +1109,10 @@ void run_nr_stage(
         && st.rx_bad == 0 && st.rx_gaps == 0 && st.tx_short == 0;
 
     std::cout
+        << "\n  settling-window events: TX " << st.warm_tx_events
+        << ", RX " << st.warm_rx_events << " (not counted)\n";
+
+    std::cout
         << "\n  VERDICT: " << (clean ? "PASS" : "FAIL")
         << "  (" << stage << " at " << std::setprecision(3)
         << cfg.sample_rate / 1e6 << " MS/s)\n";
@@ -1098,18 +1172,19 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
         const double slot  = argc >= 6 ? std::stod(argv[5]) : 0.5;
         const double guard = argc >= 7 ? std::stod(argv[6]) : 0.1;
         const double gain  = argc >= 8 ? std::stod(argv[7]) : 80.0;
+        const double warm  = argc >= 9 ? std::stod(argv[8]) : 2.0;
 
         if (stage == "all")
         {
             for (const std::string st :
                  {"txonly", "rxonly", "both", "tdd"})
             {
-                run_nr_stage(usrp, cfg, st, rate, secs, slot, guard, gain);
+                run_nr_stage(usrp, cfg, st, rate, secs, slot, guard, gain, warm);
             }
         }
         else
         {
-            run_nr_stage(usrp, cfg, stage, rate, secs, slot, guard, gain);
+            run_nr_stage(usrp, cfg, stage, rate, secs, slot, guard, gain, warm);
         }
     }
     else if (mode == "both")

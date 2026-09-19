@@ -201,6 +201,33 @@ Note that 30.72 MS/s is not a hard requirement for a 20 MHz carrier -- the rate
 follows from numerology, FFT size and RB allocation. It is used because it is
 the conventional rate for that configuration, and therefore a realistic target.
 
+#### Measured results, 0.5 ms slots, 60 s runs
+
+| stage | 15.36 MS/s | 23.04 MS/s | 30.72 MS/s |
+|---|---|---|---|
+| `txonly` | - | - | PASS |
+| `rxonly` | - | - | PASS (device rate exactly 30.720000) |
+| `both` | - | - | FAIL (12-22 underflow) |
+| `tdd` | **PASS, PASS** | PASS, FAIL (2 underflow) | 0 / 1 / 5 / 59 / 74 underflow |
+
+Each direction alone sustains 30.72 MS/s comfortably. Both at once is where it
+breaks, so the limit is the shared USB 3 pipe and host scheduling rather than
+the radio or the slot timing -- note that timestamp gaps were **zero in every
+run**, including the failures. Slot boundaries never drifted; the host simply
+could not always feed the transmitter.
+
+30.72 MS/s is marginal rather than impossible: one 60 s run was perfectly clean
+and others were not, varying by more than an order of magnitude between runs.
+15.36 MS/s (10 MHz NR) was clean twice over.
+
+Setting the CPU governor to `performance` and raising `usbfs_memory_mb` to 256
+did **not** help -- both were tried and the failures continued, so the usual
+first-line tuning is not the answer here.
+
+Buffer sizing did matter, and was a real bug: the transmit buffer was a fixed
+sample count, which at 30.72 MS/s is only about 1 ms of data. Sizing it by time
+instead (10 ms) turned one 30.72 MS/s run from 74 underflows to zero.
+
 ## Is anything actually being transmitted?
 
 The check that settles device-versus-code arguments. On the receiving box:

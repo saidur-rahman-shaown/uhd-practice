@@ -242,110 +242,188 @@ bool send_timed_burst(
 
 
 // ============================================================
-// 2 + 3. Timed TX and minimum safe lead time
+// 2 + 3. Minimum safe lead time, judged by async metadata
 // ============================================================
 
-bool test_tx_lead_time(
+/*
+ * send() returning the full sample count only means the host
+ * handed the samples to UHD. It says nothing about whether the
+ * device transmitted them at the requested time -- a burst whose
+ * time_spec has already passed is dropped and reported later, out
+ * of band, as EVENT_CODE_TIME_ERROR.
+ *
+ * So schedule each burst, then drain the async channel and let the
+ * device say what actually happened.
+ */
+
+struct LeadResult
+{
+    size_t acks = 0;
+    size_t time_errors = 0;
+    size_t underflows = 0;
+    size_t other = 0;
+    size_t no_message = 0;
+};
+
+
+LeadResult probe_lead_time(
     uhd::usrp::multi_usrp::sptr usrp,
     const Config& cfg,
-    double lead_time)
+    double lead_seconds,
+    size_t slot_samples,
+    size_t iterations)
 {
+    LeadResult r{};
+
     auto tx_stream =
         usrp->get_tx_stream(
             uhd::stream_args_t("fc32", "sc16"));
 
-    auto samples =
-        make_waveform(
-            cfg.num_samples,
-            cfg.sample_rate,
-            10e3);
+    const auto samples =
+        make_waveform(slot_samples, cfg.sample_rate, 10e3);
 
-    /*
-     * Read the USRP's device clock.
-     */
-    const uhd::time_spec_t now =
-        usrp->get_time_now();
+    const double slot_seconds =
+        static_cast<double>(slot_samples) / cfg.sample_rate;
 
-    /*
-     * Schedule TX in the future.
-     */
-    const uhd::time_spec_t tx_time =
-        now + lead_time;
+    for (size_t i = 0; i < iterations; ++i)
+    {
+        uhd::tx_metadata_t md;
 
-    /*
-     * Call send() immediately.
-     */
-    bool success =
-        send_timed_burst(
-            tx_stream,
-            samples,
-            tx_time);
+        md.start_of_burst = true;
+        md.end_of_burst   = true;
+        md.has_time_spec  = true;
+        md.time_spec      = usrp->get_time_now() + lead_seconds;
 
-    /*
-     * Wait long enough for the device to process it.
-     */
-    std::this_thread::sleep_for(
-        std::chrono::duration<double>(
-            lead_time + 0.05));
+        tx_stream->send(
+            samples.data(),
+            samples.size(),
+            md,
+            1.0);
 
-    return success;
+        /*
+         * Wait for the burst to play out, then collect the verdict.
+         */
+        std::this_thread::sleep_for(
+            std::chrono::duration<double>(
+                lead_seconds + slot_seconds + 0.002));
+
+        uhd::async_metadata_t am;
+
+        bool got = false;
+
+        while (tx_stream->recv_async_msg(am, 0.05))
+        {
+            got = true;
+
+            switch (am.event_code)
+            {
+                case uhd::async_metadata_t::EVENT_CODE_BURST_ACK:
+                    ++r.acks;
+                    break;
+
+                case uhd::async_metadata_t::EVENT_CODE_TIME_ERROR:
+                    ++r.time_errors;
+                    break;
+
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW:
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW_IN_PACKET:
+                    ++r.underflows;
+                    break;
+
+                default:
+                    ++r.other;
+                    break;
+            }
+        }
+
+        if (!got)
+            ++r.no_message;
+    }
+
+    return r;
 }
 
 
 void find_minimum_safe_lead(
     uhd::usrp::multi_usrp::sptr usrp,
-    const Config& cfg)
+    const Config& cfg,
+    double slot_ms = 1.0,
+    size_t iterations = 50)
 {
     std::cout << "\n";
     std::cout << "====================================================\n";
-    std::cout << "2 + 3. TIMED TX / MINIMUM SAFE LEAD TIME\n";
+    std::cout << "2 + 3. MINIMUM SAFE LEAD TIME (async-verified)\n";
     std::cout << "====================================================\n";
 
-    std::vector<double> lead_times_ms =
-    {
-        0.1,
-        0.2,
-        0.5,
-        1.0,
-        2.0,
-        5.0,
-        10.0,
-        20.0
-    };
+    const size_t slot_samples =
+        static_cast<size_t>(cfg.sample_rate * slot_ms / 1e3);
 
     std::cout
-        << "\nLead time       Result\n";
-    std::cout
-        << "-------------------------\n";
+        << "\nSlot = " << slot_ms << " ms ("
+        << slot_samples << " samples at "
+        << cfg.sample_rate / 1e6 << " MS/s), "
+        << iterations << " bursts per lead time.\n\n";
 
-    for (double lead_ms : lead_times_ms)
+    std::cout
+        << "  lead      ACK   late  under   none   on-time\n"
+        << "  ---------------------------------------------\n";
+
+    const std::vector<double> leads_ms =
+        {0.2, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0, 12.0, 20.0, 30.0};
+
+    double best = -1.0;
+
+    for (double lead_ms : leads_ms)
     {
-        /*
-         * Flush any previous TX state.
-         */
         usrp->clear_command_time();
 
-        bool success =
-            test_tx_lead_time(
-                usrp,
-                cfg,
-                lead_ms / 1000.0);
+        const auto r =
+            probe_lead_time(
+                usrp, cfg, lead_ms / 1e3, slot_samples, iterations);
+
+        const double rate =
+            100.0 * double(r.acks) / double(iterations);
 
         std::cout
-            << std::setw(8)
-            << lead_ms
-            << " ms       "
-            << (success ? "send accepted" : "FAILED")
+            << "  " << std::setw(5) << std::fixed
+            << std::setprecision(1) << lead_ms << " ms"
+            << std::setw(7) << r.acks
+            << std::setw(7) << r.time_errors
+            << std::setw(7) << r.underflows
+            << std::setw(7) << r.no_message
+            << std::setw(9) << std::setprecision(1) << rate << " %"
             << "\n";
+
+        if (r.acks == iterations && r.time_errors == 0 && best < 0.0)
+            best = lead_ms;
     }
 
     std::cout << "\n";
+
+    if (best > 0.0)
+    {
+        std::cout
+            << "Minimum lead time with no late bursts over "
+            << iterations << " trials: " << best << " ms.\n\n"
+            << "Budget more than this in practice -- this is the\n"
+            << "shortest lead that happened to be clean here, not a\n"
+            << "guaranteed bound. Host scheduling jitter under load\n"
+            << "will push it up.\n";
+    }
+    else
+    {
+        std::cout
+            << "No lead time in the sweep was completely clean.\n"
+            << "If even the longest lead shows late bursts, the host\n"
+            << "is not keeping up at all -- check for CPU contention.\n";
+    }
+
     std::cout
-        << "NOTE:\n"
-        << "send() returning successfully does NOT prove that\n"
-        << "the TX was transmitted on time.\n"
-        << "For true late-TX detection, monitor UHD async TX\n"
-        << "metadata in the next refinement of this experiment.\n";
+        << "\nFor TDD slot timing: the lead time is how far ahead of\n"
+        << "air time the host must hand a burst to UHD. A slot period\n"
+        << "shorter than this cannot be scheduled per-slot from the\n"
+        << "host; the schedule has to be built further ahead, as a\n"
+        << "run of bursts queued in advance with absolute timestamps.\n";
 }
 
 
@@ -2177,6 +2255,314 @@ void receive_zadoff_chu(
 
 
 // ============================================================
+// 10. Sustained TDD slot scheduling
+// ============================================================
+
+/*
+ * The lead-time sweep measures one isolated burst at a time, which
+ * flatters the host: it gets the whole inter-burst gap to prepare.
+ * A TDD frame is the harder case -- slots land back to back at a
+ * fixed cadence and the host must stay ahead of the clock for the
+ * whole run.
+ *
+ * The right pattern is not to schedule each slot just in time.
+ * Compute every slot's air time from one absolute start, queue
+ * several slots ahead, and let the device's clock place them. The
+ * host then only has to keep the pipeline full on average; it does
+ * not have to hit each deadline individually.
+ */
+
+void run_tdd_slots(
+    uhd::usrp::multi_usrp::sptr usrp,
+    const Config& cfg,
+    double slot_ms = 1.0,
+    size_t num_slots = 1000,
+    double pipeline_ms = 20.0)
+{
+    std::cout << "\n";
+    std::cout << "====================================================\n";
+    std::cout << "10. SUSTAINED TDD SLOT SCHEDULING\n";
+    std::cout << "====================================================\n";
+
+    const size_t slot_samples =
+        static_cast<size_t>(cfg.sample_rate * slot_ms / 1e3);
+
+    const double slot_period = slot_ms / 1e3;
+
+    std::cout
+        << "\nSlot     = " << slot_ms << " ms ("
+        << slot_samples << " samples)\n"
+        << "Slots    = " << num_slots
+        << "  (" << num_slots * slot_ms / 1e3 << " s of frame time)\n"
+        << "Pipeline = " << pipeline_ms << " ms queued ahead\n\n";
+
+    auto tx_stream =
+        usrp->get_tx_stream(
+            uhd::stream_args_t("fc32", "sc16"));
+
+    const auto samples =
+        make_waveform(slot_samples, cfg.sample_rate, 10e3);
+
+    size_t acks = 0, late = 0, under = 0, other = 0, short_sends = 0;
+
+    /*
+     * One absolute anchor. Every slot is a fixed offset from it, so
+     * the cadence cannot drift with host scheduling.
+     */
+    const uhd::time_spec_t start =
+        usrp->get_time_now() + pipeline_ms / 1e3;
+
+    auto drain = [&](double timeout) {
+        uhd::async_metadata_t am;
+        while (tx_stream->recv_async_msg(am, timeout)) {
+            switch (am.event_code) {
+                case uhd::async_metadata_t::EVENT_CODE_BURST_ACK:
+                    ++acks; break;
+                case uhd::async_metadata_t::EVENT_CODE_TIME_ERROR:
+                    ++late; break;
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW:
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW_IN_PACKET:
+                    ++under; break;
+                default:
+                    ++other; break;
+            }
+        }
+    };
+
+    const auto wall_start = clock_type::now();
+
+    for (size_t n = 0; n < num_slots; ++n)
+    {
+        uhd::tx_metadata_t md;
+
+        md.start_of_burst = true;
+        md.end_of_burst   = true;
+        md.has_time_spec  = true;
+        md.time_spec      = start + uhd::time_spec_t(double(n) * slot_period);
+
+        const size_t sent =
+            tx_stream->send(samples.data(), samples.size(), md, 1.0);
+
+        if (sent != samples.size())
+            ++short_sends;
+
+        /*
+         * Collect verdicts as they arrive, without blocking: the
+         * device reports each burst well after it was queued.
+         */
+        drain(0.0);
+    }
+
+    /*
+     * Let the tail of the frame play out, then take the rest.
+     */
+    std::this_thread::sleep_for(
+        std::chrono::duration<double>(pipeline_ms / 1e3 + 0.2));
+
+    drain(0.05);
+
+    const double wall =
+        std::chrono::duration<double>(
+            clock_type::now() - wall_start).count();
+
+    std::cout
+        << "Result over " << num_slots << " slots:\n"
+        << "  burst ACK    = " << acks << "\n"
+        << "  late         = " << late << "\n"
+        << "  underflow    = " << under << "\n"
+        << "  other        = " << other << "\n"
+        << "  short sends  = " << short_sends << "\n"
+        << "  wall time    = " << std::fixed << std::setprecision(3)
+        << wall << " s (frame time "
+        << num_slots * slot_ms / 1e3 << " s)\n";
+
+    const double ok =
+        100.0 * double(acks) / double(num_slots);
+
+    std::cout
+        << "  on-time      = " << std::setprecision(2) << ok << " %\n";
+
+    std::cout << "\nInterpretation:\n";
+
+    if (late == 0 && under == 0 && acks == num_slots)
+    {
+        std::cout
+            << "Every slot landed on time. A " << slot_ms
+            << " ms TDD cadence is sustainable on this host at\n"
+            << "this pipeline depth.\n";
+    }
+    else
+    {
+        std::cout
+            << "Slots were missed. Raise the pipeline depth first --\n"
+            << "queueing further ahead costs nothing but latency and\n"
+            << "is the usual cure. Persistent underflow instead means\n"
+            << "the host cannot generate samples fast enough.\n";
+    }
+}
+
+
+// ============================================================
+// 11. TDD as one continuous timed stream
+// ============================================================
+
+/*
+ * Scheduling one burst per slot does not work at a 1 ms cadence on
+ * this hardware: with start- and end-of-burst on every slot, only
+ * about half of them are acknowledged. The device is being asked to
+ * tear down and re-arm the transmit chain every slot, and it cannot
+ * keep up.
+ *
+ * The approach that does work is to stop treating slots as separate
+ * transmissions. Open the burst once, give it a single absolute
+ * start time, and then stream continuously -- with the slot
+ * structure written into the samples themselves, signal during the
+ * transmit portion and zeros during the rest.
+ *
+ * Slot boundaries are then exact by construction, because they are
+ * just sample counts inside one stream. The host has no per-slot
+ * deadline to miss; it only has to keep the pipe fed, which is the
+ * same job as any continuous transmission.
+ */
+
+void run_tdd_stream(
+    uhd::usrp::multi_usrp::sptr usrp,
+    const Config& cfg,
+    double slot_ms = 1.0,
+    double seconds = 5.0,
+    double duty = 0.5)
+{
+    std::cout << "\n";
+    std::cout << "====================================================\n";
+    std::cout << "11. TDD AS ONE CONTINUOUS TIMED STREAM\n";
+    std::cout << "====================================================\n";
+
+    const size_t slot_samples =
+        static_cast<size_t>(cfg.sample_rate * slot_ms / 1e3);
+
+    const size_t on_samples =
+        static_cast<size_t>(double(slot_samples) * duty);
+
+    std::cout
+        << "\nSlot  = " << slot_ms << " ms (" << slot_samples
+        << " samples), TX portion " << on_samples
+        << " samples (" << duty * 100.0 << " %)\n"
+        << "Run   = " << seconds << " s\n\n";
+
+    auto tx_stream =
+        usrp->get_tx_stream(
+            uhd::stream_args_t("fc32", "sc16"));
+
+    /*
+     * One frame buffer holding a whole number of slots, sized to
+     * keep the device fed comfortably.
+     */
+    const size_t slots_per_buffer =
+        std::max<size_t>(1, 16000 / std::max<size_t>(1, slot_samples));
+
+    const auto tone =
+        make_waveform(on_samples, cfg.sample_rate, 10e3);
+
+    std::vector<complex_t> buffer;
+    buffer.reserve(slots_per_buffer * slot_samples);
+
+    for (size_t s = 0; s < slots_per_buffer; ++s)
+    {
+        for (size_t n = 0; n < slot_samples; ++n)
+        {
+            buffer.push_back(
+                n < on_samples
+                    ? tone[n] * 0.7f
+                    : complex_t(0.0f, 0.0f));
+        }
+    }
+
+    std::cout
+        << "Buffer = " << slots_per_buffer << " slots ("
+        << buffer.size() << " samples per send)\n\n";
+
+    size_t acks = 0, late = 0, under = 0, other = 0, sends = 0;
+
+    uhd::tx_metadata_t md;
+
+    md.start_of_burst = true;
+    md.end_of_burst   = false;
+    md.has_time_spec  = true;
+    md.time_spec      = usrp->get_time_now() + 0.05;
+
+    const auto t0 = clock_type::now();
+
+    while (std::chrono::duration<double>(
+               clock_type::now() - t0).count() < seconds)
+    {
+        tx_stream->send(buffer.data(), buffer.size(), md, 1.0);
+
+        ++sends;
+
+        md.start_of_burst = false;
+        md.has_time_spec  = false;
+
+        uhd::async_metadata_t am;
+
+        while (tx_stream->recv_async_msg(am, 0.0))
+        {
+            switch (am.event_code)
+            {
+                case uhd::async_metadata_t::EVENT_CODE_BURST_ACK:
+                    ++acks; break;
+                case uhd::async_metadata_t::EVENT_CODE_TIME_ERROR:
+                    ++late; break;
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW:
+                case uhd::async_metadata_t::EVENT_CODE_UNDERFLOW_IN_PACKET:
+                    ++under; break;
+                default:
+                    ++other; break;
+            }
+        }
+    }
+
+    md.end_of_burst = true;
+    tx_stream->send(buffer.data(), 0, md);
+
+    const size_t slots_sent = sends * slots_per_buffer;
+
+    std::cout
+        << "Result:\n"
+        << "  sends        = " << sends << "\n"
+        << "  slots        = " << slots_sent << "\n"
+        << "  underflow    = " << under << "\n"
+        << "  late         = " << late << "\n"
+        << "  burst ACK    = " << acks << "\n"
+        << "  other        = " << other << "\n";
+
+    std::cout << "\nInterpretation:\n";
+
+    if (under == 0 && late == 0)
+    {
+        std::cout
+            << "No underflows and no late packets across "
+            << slots_sent << " slots.\n"
+            << "The " << slot_ms << " ms cadence holds: slot edges are\n"
+            << "sample-exact inside the stream, so they cannot drift.\n"
+            << "Only the first sample needed a timestamp.\n";
+    }
+    else if (under > 0)
+    {
+        std::cout
+            << under << " underflows -- the host fell behind the\n"
+            << "device. Send a larger buffer per call, or raise the\n"
+            << "process priority.\n";
+    }
+    else
+    {
+        std::cout
+            << late << " late packets, which should not happen once\n"
+            << "the burst is open. Check the initial time spec.\n";
+    }
+}
+
+
+// ============================================================
 // Complete experiment
 // ============================================================
 
@@ -2250,7 +2636,9 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     {
         find_minimum_safe_lead(
             usrp,
-            cfg);
+            cfg,
+            argc >= 3 ? std::stod(argv[2]) : 1.0,
+            argc >= 4 ? static_cast<size_t>(std::stoul(argv[3])) : 50);
     }
     else if (mode == "txrx")
     {
@@ -2325,6 +2713,23 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             argc >= 5 ? std::stod(argv[4]) : 4.0,
             argc >= 6 ? std::stod(argv[5]) : 50.0);
     }
+    else if (mode == "tdd")
+    {
+        run_tdd_slots(
+            usrp,
+            cfg,
+            argc >= 3 ? std::stod(argv[2]) : 1.0,
+            argc >= 4 ? static_cast<size_t>(std::stoul(argv[3])) : 1000,
+            argc >= 5 ? std::stod(argv[4]) : 20.0);
+    }
+    else if (mode == "tdds")
+    {
+        run_tdd_stream(
+            usrp, cfg,
+            argc >= 3 ? std::stod(argv[2]) : 1.0,
+            argc >= 4 ? std::stod(argv[3]) : 5.0,
+            argc >= 5 ? std::stod(argv[4]) : 0.5);
+    }
     else if (mode == "all")
     {
         run_all(
@@ -2341,7 +2746,9 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
         std::cerr
             << "Usage:\n"
             << "  ./latency_test send\n"
-            << "  ./latency_test lead\n"
+            << "  ./latency_test lead [slot_ms] [iterations]\n"
+            << "  ./latency_test tdd [slot_ms] [slots] [pipeline_ms]\n"
+            << "  ./latency_test tdds [slot_ms] [seconds] [duty]\n"
             << "  ./latency_test txrx\n"
             << "  ./latency_test recv\n"
             << "  ./latency_test txmeta\n"

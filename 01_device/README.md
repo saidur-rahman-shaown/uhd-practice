@@ -68,6 +68,29 @@ ssh shaown@192.168.0.103 'cd ~/uhd-practice/01_device && \
 `setsid nohup ... </dev/null &` matters: without it the sender dies when ssh
 returns.
 
+## TDD slot timing
+
+```bash
+./build/latency_test lead 1.0 50        # minimum safe lead, async-verified
+./build/latency_test tdd  1.0 1000 20   # one burst per slot  -- does NOT work
+./build/latency_test tdds 1.0 10 0.5    # one continuous stream -- works
+```
+
+`lead` sweeps scheduling lead times and judges each burst by the device's own
+async report rather than by send() returning. Measured here: 0.2 ms is late 98%
+of the time, 0.5 ms and above is clean.
+
+`tdd` schedules one self-contained burst per slot. At a 1 ms cadence only half
+the slots are acknowledged, and neither a deeper pipeline nor a longer slot
+helps -- the device cannot tear down and re-arm the transmit chain every slot.
+Do not build a frame this way.
+
+`tdds` is the pattern to use: open the burst once, timestamp only the first
+sample, and stream continuously with the slot structure written into the
+samples (signal during the TX portion, zeros during the rest). Measured over
+10016 slots at 1 ms: zero underflows, zero late packets. Slot edges are sample
+counts inside one stream, so they cannot drift.
+
 ## Is anything actually being transmitted?
 
 The check that settles device-versus-code arguments. On the receiving box:

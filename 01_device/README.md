@@ -137,6 +137,34 @@ async report rather than by `send()` returning -- `send()` accepts a burst whose
 time has already passed and the device drops it silently. Measured: 0.2 ms lead
 is late in 49 of 50 bursts, 0.5 ms and above is clean.
 
+### Alternating TX/RX slots
+
+```bash
+./build/tdd_latency_test alt 0.5 10 0.1 80 20e6   # slot_ms, seconds, guard, tx_gain, rate
+```
+
+A real TDD frame -- the same radio transmits in one slot and listens in the
+next. Both directions run as continuous streams anchored to one `set_time_now`,
+never one command per slot. The transmitter sends signal during its own slots
+and zeros during the listening slots; the receiver runs free and assigns each
+sample to a slot by its timestamp.
+
+Verified on air at the far NUC, which sees exactly the designed frame:
+
+| slot | duty measured | on-time measured | on/off |
+|---|---|---|---|
+| 1.0 ms | 45.0 % | 0.900 ms | 43.8 dB |
+| 0.5 ms | 45.0 % | 0.451 ms | 42.9 dB |
+
+45% is correct for a 10% guard: 0.9 ms of transmission in a 2 ms TX+RX period.
+
+Sustained rate with both directions running at once, 0.5 ms slots:
+
+| rate each way | result |
+|---|---|
+| 5, 15, 20, 25 MS/s | clean |
+| 30 MS/s | underflows |
+
 ## Is anything actually being transmitted?
 
 The check that settles device-versus-code arguments. On the receiving box:

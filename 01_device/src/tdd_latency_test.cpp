@@ -1,6 +1,12 @@
 #include "common.hpp"
 
 #include <uhd/utils/safe_main.hpp>
+#include <uhd/utils/thread.hpp>
+
+#include <pthread.h>
+#include <sched.h>
+
+#include <cstdlib>
 
 #include <algorithm>
 #include <chrono>
@@ -611,6 +617,62 @@ void run_tdd_alternating(
 
 
 // ============================================================
+// Real-time priority and CPU pinning
+// ============================================================
+
+/*
+ * Isolating cores with isolcpus only removes them from the general
+ * scheduler -- nothing runs there until a thread is explicitly
+ * pinned to one. So isolation and pinning are the same measure, and
+ * doing only half of it changes nothing.
+ *
+ * Which cores to use is taken from the environment so the binary
+ * does not have to know the machine:
+ *
+ *   NR_TX_CPU=2 NR_RX_CPU=3 ./tdd_latency_test nr tdd ...
+ *
+ * Real-time priority is requested through UHD's helper, which fails
+ * softly if the user is not permitted it.
+ */
+
+void pin_and_prioritise(const char* what, const char* env_var)
+{
+    try
+    {
+        uhd::set_thread_priority_safe(1.0, true);
+    }
+    catch (const std::exception& e)
+    {
+        std::cout
+            << "  NOTE: no RT priority for " << what
+            << " (" << e.what() << ")\n";
+    }
+
+    const char* v = std::getenv(env_var);
+
+    if (!v) return;
+
+    const int cpu = std::atoi(v);
+
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+
+    if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set) != 0)
+    {
+        std::cout
+            << "  NOTE: could not pin " << what
+            << " to CPU " << cpu << "\n";
+    }
+    else
+    {
+        std::cout
+            << "  pinned " << what << " to CPU " << cpu << "\n";
+    }
+}
+
+
+// ============================================================
 // 13. NR-like staged feasibility test
 // ============================================================
 
@@ -908,6 +970,8 @@ void run_nr_stage(
     if (did_tx)
     {
         tx_thread = std::thread([&]() {
+            pin_and_prioritise("TX thread", "NR_TX_CPU");
+
             uhd::tx_metadata_t md;
             md.start_of_burst = true;
             md.end_of_burst   = false;
@@ -968,6 +1032,8 @@ void run_nr_stage(
             tx->send(tx_buffer.data(), 0, md);
         });
     }
+
+    if (did_rx) pin_and_prioritise("RX thread", "NR_RX_CPU");
 
     const auto wall_t0 = clock_type::now();
 

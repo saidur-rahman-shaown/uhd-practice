@@ -228,6 +228,43 @@ Buffer sizing did matter, and was a real bug: the transmit buffer was a fixed
 sample count, which at 30.72 MS/s is only about 1 ms of data. Sizing it by time
 instead (10 ms) turned one 30.72 MS/s run from 74 underflows to zero.
 
+#### Host tuning: what helped and what did not
+
+The streaming threads ask for real-time priority through UHD's helper, which is
+in the code and needs no setup. CPU pinning is optional and off by default:
+
+```bash
+NR_TX_CPU=2 NR_RX_CPU=3 ./build/tdd_latency_test nr tdd 30.72e6 60
+```
+
+Underflows per 60 s run at 30.72 MS/s, across configurations:
+
+| configuration | runs |
+|---|---|
+| no tuning | 0, 1, 5, 59, 74 |
+| **real-time priority only** | **0, 0, 28** |
+| isolcpus + nohz_full | 71, 21, 66 |
+| isolcpus, cores forced to 3.5 GHz | 0, 65, 37 |
+| the above + USB IRQ on an isolated core | 71, 92, 103 |
+
+**CPU isolation made things worse, not better**, and is not recommended here.
+Two reasons, both measured:
+
+`nohz_full` stops the scheduler tick on the isolated cores, and intel_pstate
+uses that tick to sample utilisation. The isolated cores therefore sat at
+400 MHz while cores 0 and 1 ran at 3900 MHz -- even under full load, and even
+with the governor set to `performance`. Forcing `scaling_min_freq` up fixed the
+frequency but not the underflows.
+
+Moving the USB interrupt onto an isolated core, away from the desktop on CPU 0,
+made it worse again: 71, 92, 103.
+
+`isolcpus=2-5` also leaves the operating system only two cores, so it degrades
+the untuned case as well. The machine was restored to stock afterwards.
+
+Real-time priority alone remains the best configuration found, and it is
+already in the code. It is not sufficient for reliable 30.72 MS/s.
+
 ## Is anything actually being transmitted?
 
 The check that settles device-versus-code arguments. On the receiving box:

@@ -16,6 +16,7 @@ ssh shaown@192.168.0.102                 # or .103
 cd ~/uhd-practice/01_device
 git pull
 cmake --build build                      # first time: cmake -B build -G Ninja .
+                                         # builds latency_test and tdd_latency_test
 ```
 
 ## Single box, no RF needed
@@ -70,26 +71,36 @@ returns.
 
 ## TDD slot timing
 
+A separate program, `tdd_latency_test`, built from the same directory.
+
 ```bash
-./build/latency_test lead 1.0 50        # minimum safe lead, async-verified
-./build/latency_test tdd  1.0 1000 20   # one burst per slot  -- does NOT work
-./build/latency_test tdds 1.0 10 0.5    # one continuous stream -- works
+./build/tdd_latency_test stream 1.0 10 0.5   # slot_ms, seconds, duty  -- works
+./build/tdd_latency_test slots  1.0 1000 20  # slot_ms, slots, pipeline_ms -- fails
+./build/tdd_latency_test both
 ```
 
-`lead` sweeps scheduling lead times and judges each burst by the device's own
-async report rather than by send() returning. Measured here: 0.2 ms is late 98%
-of the time, 0.5 ms and above is clean.
+`slots` schedules one self-contained burst per slot. This is the obvious way to
+build a frame and it does not work: at a 1 ms cadence only half the slots are
+acknowledged, and neither a deeper pipeline nor a longer slot helps. The device
+cannot tear down and re-arm the transmit chain every slot. It is kept because
+seeing it fail is the point.
 
-`tdd` schedules one self-contained burst per slot. At a 1 ms cadence only half
-the slots are acknowledged, and neither a deeper pipeline nor a longer slot
-helps -- the device cannot tear down and re-arm the transmit chain every slot.
-Do not build a frame this way.
+`stream` is the pattern to use. The burst is opened once, only the first sample
+carries a timestamp, and the slot structure lives in the samples -- signal
+during the TX portion, zeros during the rest. Measured over 10016 slots at
+1 ms: zero underflows, zero late packets. Slot edges are sample counts inside
+one stream, so they cannot drift, and the host has no per-slot deadline to miss.
 
-`tdds` is the pattern to use: open the burst once, timestamp only the first
-sample, and stream continuously with the slot structure written into the
-samples (signal during the TX portion, zeros during the rest). Measured over
-10016 slots at 1 ms: zero underflows, zero late packets. Slot edges are sample
-counts inside one stream, so they cannot drift.
+Related, in `latency_test`:
+
+```bash
+./build/latency_test lead 1.0 50     # minimum safe lead, async-verified
+```
+
+This sweeps scheduling lead times and judges each burst by the device's own
+async report rather than by `send()` returning -- `send()` accepts a burst whose
+time has already passed and the device drops it silently. Measured: 0.2 ms lead
+is late in 49 of 50 bursts, 0.5 ms and above is clean.
 
 ## Is anything actually being transmitted?
 

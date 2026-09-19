@@ -26,3 +26,12 @@ target_link_libraries(latency_test
     PRIVATE
     UHD::uhd
 )
+
+add_executable(tdd_latency_test
+    src/tdd_latency_test.cpp
+)
+
+target_link_libraries(tdd_latency_test
+    PRIVATE
+    UHD::uhd
+)

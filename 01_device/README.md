@@ -321,6 +321,19 @@ So a 20 MHz-class, 30 kHz SCS NR TDD waveform **is** sustainable here -- the
 earlier ceiling was the wire format, not the radio, the host or the slot
 timing.
 
+**This needs no real-time kernel.** sc12 at 30.72 MS/s was run nine times on
+each kernel and passed every time on both:
+
+| kernel | sc12 @ 30.72 MS/s | sc16 @ 30.72 MS/s |
+|---|---|---|
+| 7.0.0-31-generic | 9 pass / 9 | 2 pass / 3 |
+| 7.0.0-31-realtime | 9 pass / 9 | 5 pass / 12 |
+
+The real-time kernel is therefore not needed, and it has a cost: a SCHED_FIFO
+thread at top priority starves the rest of the system, which made ssh unusable
+during runs (ping latency went from 0.5 ms to 80 ms and sshd stopped
+responding until the run finished). Prefer the generic kernel.
+
 #### PREEMPT_RT kernel
 
 Ubuntu 26.04 carries a real-time kernel in the normal archive -- no Pro

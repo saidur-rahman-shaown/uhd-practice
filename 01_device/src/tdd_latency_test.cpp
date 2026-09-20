@@ -37,6 +37,28 @@
  */
 
 
+/*
+ * The over-the-wire format decides how much USB bandwidth a given
+ * sample rate costs. sc16 sends four bytes per complex sample, so
+ * 30.72 MS/s in both directions is about 246 MB/s -- roughly 2 Gbps,
+ * against maybe 3.2 Gbps of usable USB 3. That is close enough to
+ * the ceiling to explain why it works sometimes and not others.
+ *
+ * sc12 and sc8 trade dynamic range for bandwidth: three bytes per
+ * sample and two, so the same rate costs 75% or 50% as much. The
+ * B210 converts in the FPGA, so nothing is asked of the host.
+ *
+ *   NR_OTW=sc12 ./tdd_latency_test nr tdd 30.72e6 60
+ */
+
+std::string otw_format()
+{
+    const char* v = std::getenv("NR_OTW");
+
+    return v ? std::string(v) : std::string("sc16");
+}
+
+
 // ============================================================
 // Master clock, so a requested rate is actually achievable
 // ============================================================
@@ -458,8 +480,10 @@ void run_tdd_alternating(
      */
     usrp->set_time_now(uhd::time_spec_t(0.0));
 
-    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", "sc16"));
-    auto rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", "sc16"));
+    const std::string otw = otw_format();
+
+    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", otw));
+    auto rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", otw));
 
     /*
      * Two slots per buffer: one transmitting, one silent. The guard
@@ -928,8 +952,12 @@ void run_nr_stage(
     uhd::tx_streamer::sptr tx;
     uhd::rx_streamer::sptr rx;
 
-    if (did_tx) tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", "sc16"));
-    if (did_rx) rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", "sc16"));
+    const std::string otw = otw_format();
+
+    std::cout << "  wire format    = " << otw << "\n";
+
+    if (did_tx) tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", otw));
+    if (did_rx) rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", otw));
 
     /*
      * Build the transmit buffer. For the plain streaming stages it is

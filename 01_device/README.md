@@ -292,6 +292,35 @@ rate, and the 32 MHz default turns a request for 23.04 MS/s into 16 and
 were the one asked for. `set_master_clock_for()` handles this; the `alt` mode
 was missing it and spent a whole test running at 16 MS/s while reporting 23.04.
 
+#### Reaching 30.72 MS/s: use a narrower wire format
+
+```bash
+NR_OTW=sc12 ./build/tdd_latency_test nr tdd 30.72e6 60
+```
+
+`sc16` sends four bytes per complex sample, so 30.72 MS/s in both directions is
+about 246 MB/s, near 2 Gbps, against perhaps 3.2 Gbps of usable USB 3. Close
+enough to the ceiling to explain why it worked only sometimes.
+
+| wire format | bytes/sample | 30.72 MS/s both ways | result over 60 s runs |
+|---|---|---|---|
+| sc16 | 4 | ~246 MB/s | 5 pass / 12 |
+| **sc12** | 3 | ~184 MB/s | **9 pass / 9** |
+| sc8 | 2 | ~123 MB/s | 3 pass / 3 |
+
+**sc12 costs nothing in real dynamic range on this device.** The B210's AD9361
+has 12-bit converters, so sc12 carries every bit the hardware produces and
+sc16 merely pads with zeros. It is 25 % less USB traffic for no loss, and there
+is little reason to use sc16 on a B210 at any rate.
+
+Verified over the air at 30.72 MS/s with sc12: duty 44.9 % against 45 %
+designed, on-time 13823 samples against 13824, on/off 35.9 dB. Slot edges land
+within **one sample**, about 32 ns.
+
+So a 20 MHz-class, 30 kHz SCS NR TDD waveform **is** sustainable here -- the
+earlier ceiling was the wire format, not the radio, the host or the slot
+timing.
+
 #### PREEMPT_RT kernel
 
 Ubuntu 26.04 carries a real-time kernel in the normal archive -- no Pro
@@ -321,8 +350,9 @@ A warning about sampling: the first 9 runs after boot were 9 for 9, including
 same rate gave 5 failures with up to 93 underflows. Three runs is not enough to
 tell apart a marginal configuration from a working one here.
 
-**23.04 MS/s is the highest rate that passed every attempt** -- a 15 MHz NR
-channel at 30 kHz SCS. 15.36 MS/s (10 MHz) is equally solid.
+Those figures are all for sc16. With sc12 the same 30.72 MS/s passes every
+time -- see the wire format section above, which supersedes this as the answer
+to whether 20 MHz is reachable.
 
 ## Is anything actually being transmitted?
 

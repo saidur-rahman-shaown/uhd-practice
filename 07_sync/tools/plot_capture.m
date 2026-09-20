@@ -32,12 +32,15 @@ function plot_capture(cap_path, n_show, N, u)
 
     fprintf('  capture   : %d samples, %.1f ms at %.3f MS/s\n', ...
             numel(x), numel(x)/fs*1e3, fs/1e6);
-    fprintf('  rms       : %.6f   (0.00061 = noise, 0.028 = ZC signal)\n', ...
+    fprintf(['  rms       : %.6f   (0.0006 noise, ~0.057 continuous ZC,\n' ...
+     '                        ~0.028 at the 25%% duty zc_tx.py sends)\n'], ...
             sqrt(mean(abs(x).^2)));
 
-    if ~strcmp(getfield_default(meta, 'overflows', '0'), '0')
-        fprintf('  WARNING: capture reports %s overflows -- it has gaps\n', ...
-                meta.overflows);
+    n_over = getfield_default(meta, 'overflows', 0);
+
+    if n_over ~= 0
+        fprintf('  WARNING: capture reports %d overflows -- it has gaps\n', ...
+                n_over);
     end
 
     % Same sequence the transmitter sent; see zadoff_chu.m.

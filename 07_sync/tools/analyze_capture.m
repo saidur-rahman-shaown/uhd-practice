@@ -1,38 +1,42 @@
-function analyze_capture(cap_path, ref_path)
-%ANALYZE_CAPTURE  Correlate an rx_capture file against a zc_transmit reference.
+function analyze_capture(cap_path, zc_length, zc_root)
+%ANALYZE_CAPTURE  Correlate an rx_capture file against a Zadoff-Chu sequence.
 %
-%   analyze_capture('~/captures/cap.fc32', '~/captures/zc_reference.fc32')
-%   analyze_capture                     % uses the defaults below
+%   analyze_capture                                     % all defaults
+%   analyze_capture('~/captures/cap.fc32')
+%   analyze_capture('~/captures/cap.fc32', 401, 25)     % length, root
 %
-% Both files are raw interleaved complex float32, which is what UHD produces
-% for the "fc32" host format. The sidecar .txt written alongside each file
-% carries the sample rate and sequence parameters, so nothing needs repeating
-% on the command line.
+% The sequence is generated here rather than read from disk, so this needs
+% only the capture -- nothing has to be copied from the transmitting machine.
+% Pass the length and root the transmitter used; they default to the values in
+% zc_transmit.
+%
+% The capture is raw interleaved complex float32, which is what UHD produces
+% for the "fc32" host format. Its sidecar .txt carries the sample rate.
 %
 % What to look for: the peak spacing should equal the sequence length. A tall
 % peak at an arbitrary offset is the stream-startup transient, which
 % correlates against anything; a peak every N samples is the sequence.
 
-    if nargin < 1, cap_path = '~/captures/cap.fc32'; end
-    if nargin < 2, ref_path = '~/captures/zc_reference.fc32'; end
+    if nargin < 1 || isempty(cap_path),  cap_path  = '~/captures/cap.fc32'; end
+    if nargin < 2 || isempty(zc_length), zc_length = 401;                   end
+    if nargin < 3 || isempty(zc_root),   zc_root   = 25;                    end
 
-    cap_meta = read_sidecar(cap_path);
-    ref_meta = read_sidecar(ref_path);
+    meta = read_sidecar(cap_path);
+    fs   = getfield_default(meta, 'rate_hz', 30.72e6);
 
     x  = read_fc32(cap_path);
-    zc = read_fc32(ref_path);
-
-    fs = getfield_default(cap_meta, 'rate_hz', 30.72e6);
+    zc = zadoff_chu(zc_length, zc_root);
     N  = numel(zc);
 
     fprintf('  capture   : %d samples, %.1f ms at %.3f MS/s\n', ...
             numel(x), numel(x)/fs*1e3, fs/1e6);
-    fprintf('  reference : %d samples (root %s)\n', ...
-            N, getfield_default(ref_meta, 'zc_root', '?'));
+    fprintf('  reference : generated, length %d, root %d\n', N, zc_root);
+    fprintf('  rms       : %.6f   (0.00061 = noise, 0.028 = ZC signal)\n', ...
+            sqrt(mean(abs(x).^2)));
 
-    if ~strcmp(getfield_default(cap_meta, 'overflows', '0'), '0')
+    if ~strcmp(getfield_default(meta, 'overflows', '0'), '0')
         fprintf('  WARNING: capture reports %s overflows -- it has gaps\n', ...
-                cap_meta.overflows);
+                meta.overflows);
     end
 
     % Correlate over a couple of hundred repetitions. Eight is enough to find
@@ -40,6 +44,11 @@ function analyze_capture(cap_path, ref_path)
     % step between repetitions and needs more of them to be worth trusting.
     win = min(numel(x), 200*N);
     seg = x(1:win);
+
+    if numel(seg) < N
+        fprintf('  capture is shorter than the sequence\n');
+        return
+    end
 
     % Matched filter: conv with the time-reversed conjugate is the same as
     % sliding correlation, and is far faster than a loop.
@@ -49,8 +58,7 @@ function analyze_capture(cap_path, ref_path)
     [peak, idx] = max(m);
     pmr = peak / mean(m);
 
-    fprintf('  rms       : %.6f\n', sqrt(mean(abs(seg).^2)));
-    fprintf('  peak/mean : %.1f at offset %d\n', pmr, idx-1);
+    fprintf('  peak/mean : %.1f at lag %d\n', pmr, idx-1);
 
     if pmr < 5
         fprintf('\n  NO detection -- that is the noise floor.\n');
@@ -59,10 +67,10 @@ function analyze_capture(cap_path, ref_path)
     end
 
     % Peak spacing is the real test of a detection.
-    thr   = mean(m) + 0.5*(peak - mean(m));
-    peaks = find(m > thr);
-    gaps  = diff(peaks);
-    gaps  = gaps(gaps > N/2);
+    thr     = mean(m) + 0.5*(peak - mean(m));
+    peaks   = find(m > thr);
+    gaps    = diff(peaks);
+    gaps    = gaps(gaps > N/2);
     spacing = median(gaps);
 
     fprintf('  peaks     : %d above threshold\n', numel(peaks));
@@ -75,25 +83,23 @@ function analyze_capture(cap_path, ref_path)
         k    = idx + (0:reps-1)*N;
         step = mean(c(k(2:end)) .* conj(c(k(1:end-1))));
         cfo  = angle(step) / (2*pi*N/fs);
-        fprintf('  CFO       : %+.1f Hz (%.2f ppm at %.0f MHz)\n', ...
-                cfo, cfo/getfield_default(cap_meta,'freq_hz',3515e6)*1e6, ...
-                getfield_default(cap_meta,'freq_hz',3515e6)/1e6);
+        fprintf('  CFO       : %+.1f Hz over %d repetitions\n', cfo, reps);
     end
 
     if abs(spacing - N) <= 2
         fprintf('\n  DETECTED, spacing matches the sequence length\n');
     else
-        fprintf('\n  peaks found but spacing is wrong\n');
+        fprintf('\n  peaks found but spacing is wrong -- see NOTES section 3.3\n');
     end
 
-    figure('Name', 'ZC capture');
+    figure('Name', 'ZC capture', 'NumberTitle', 'off');
 
     subplot(2,1,1);
     plot((0:win-1)/fs*1e3, abs(seg));
     xlabel('ms'); ylabel('|x|'); title('Capture envelope'); grid on;
 
     subplot(2,1,2);
-    plot((0:numel(m)-1), m); hold on;
+    plot(0:numel(m)-1, m); hold on;
     plot(peaks-1, m(peaks), 'ro');
     xlabel('lag (samples)'); ylabel('|correlation|');
     title(sprintf('Matched filter, peak/mean %.1f', pmr)); grid on;

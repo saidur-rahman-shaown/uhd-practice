@@ -6,8 +6,9 @@ cmake_install.cmake
 compile_commands.json
 install_manifest.txt
 
-# Generated SDR sample captures
+# Generated SDR sample captures and their sidecars
 *.fc32
+*.fc32.txt
 
 # Local editor and OS files
 .vscode/

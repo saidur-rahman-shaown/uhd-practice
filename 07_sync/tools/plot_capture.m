@@ -1,9 +1,10 @@
-function plot_capture(cap_path, n_show)
+function plot_capture(cap_path, n_show, N, u)
 %PLOT_CAPTURE  Plot an rx_capture file and correlate it against Zadoff-Chu.
 %
 %   plot_capture                                   % uses the defaults below
 %   plot_capture('~/captures/cap.fc32')
 %   plot_capture('~/captures/cap.fc32', 8000)      % samples to plot
+%   plot_capture('~/captures/cap.fc32', 4000, 401, 25)   % length, root
 %
 % Plots the magnitude, real and imaginary parts of the capture, generates the
 % same Zadoff-Chu sequence the transmitter sent, correlates, and reports where
@@ -18,10 +19,8 @@ function plot_capture(cap_path, n_show)
 
     if nargin < 1 || isempty(cap_path), cap_path = '~/captures/cap.fc32'; end
     if nargin < 2 || isempty(n_show),   n_show   = 4000;                  end
-
-    % Must match zc_transmit / make_zadoff_chu.
-    N = 401;      % zc_length
-    u = 25;       % zc_root
+    if nargin < 3 || isempty(N),        N        = 401;   end   % zc_length
+    if nargin < 4 || isempty(u),        u        = 25;    end   % zc_root
 
     meta = read_sidecar(cap_path);
     fs   = getfield_default(meta, 'rate_hz', 30.72e6);
@@ -38,17 +37,8 @@ function plot_capture(cap_path, n_show)
                 meta.overflows);
     end
 
-    % ---------------------------------------------------------------
-    % Zadoff-Chu, same formula as the C++
-    %
-    %   x[n] = exp(-j*pi*u*n*(n+1)/N)
-    %
-    % exp(-j*pi*k/N) repeats every k = 2N, so the numerator is reduced
-    % first -- without that it loses precision for long sequences.
-    % ---------------------------------------------------------------
-    n   = (0:N-1).';
-    num = mod(u * n .* (n + 1), 2*N);
-    zc  = exp(-1j * pi * num / N);
+    % Same sequence the transmitter sent; see zadoff_chu.m.
+    zc = zadoff_chu(N, u);
 
     fprintf('  ZC        : length %d, root %d, |zc| in [%.6f %.6f]\n', ...
             N, u, min(abs(zc)), max(abs(zc)));

@@ -263,8 +263,49 @@ rate is not analysable.
 
 ## MATLAB
 
-[`07_sync/tools/analyze_capture.m`](07_sync/tools/analyze_capture.m) does the
-whole job and plots the result:
+Two scripts. [`plot_capture.m`](07_sync/tools/plot_capture.m) is the one to
+reach for first — it needs only the capture, because it generates the sequence
+itself:
+
+```matlab
+cd 07_sync/tools
+plot_capture('~/captures/cap.fc32')        % or plot_capture with no arguments
+plot_capture('~/captures/cap.fc32', 8000)  % samples to draw
+```
+
+It draws three figures — the capture's magnitude, real and imaginary parts; the
+Zadoff-Chu reference it generated; and the correlation, both in full and zoomed
+around the peak — then prints:
+
+```
+  capture   : 30722400 samples, 1000.1 ms at 30.720 MS/s
+  rms       : 0.057956   (0.00061 = noise, 0.028 = ZC signal)
+  ZC        : length 401, root 25, |zc| in [1.000000 1.000000]
+  peak/mean : 142.4 at lag 2920
+  peaks     : 199 above threshold
+  spacing   : 401 samples (expect 401)
+  CFO       : +3438.6 Hz over 191 repetitions
+
+  DETECTED, spacing matches the sequence length
+```
+
+The sequence it generates is the same one the C++ transmits — verified against
+the reference file to float32 precision:
+
+```matlab
+N = 401; u = 25;                       % zc_length, zc_root
+n   = (0:N-1).';
+num = mod(u * n .* (n + 1), 2*N);      % reduce first, as the C++ does
+zc  = exp(-1j * pi * num / N);
+```
+
+Only the capture's magnitude, real and imaginary parts are plotted for the
+first few thousand samples — a second at 30.72 MS/s is 30.7 million points and
+will not draw.
+
+[`analyze_capture.m`](07_sync/tools/analyze_capture.m) is the same analysis
+against the reference file the transmitter wrote, rather than a regenerated
+sequence:
 
 ```matlab
 cd 07_sync/tools

@@ -1,0 +1,10 @@
+format=fc32_interleaved_float32
+rate_hz=30720000.023935
+freq_hz=3514999999.997609
+gain_db=50.000000
+antenna=RX2
+otw=sc12
+samples=30722400
+first_sample_device_time_s=1.266498
+overflows=0
+errors=0

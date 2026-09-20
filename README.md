@@ -279,6 +279,14 @@ Both scripts default to `cap.fc32` in the current folder, so the usual thing is
 to `cd` to wherever the capture is and run them with no arguments. A leading
 `~` is expanded, which `fopen` does not do on its own.
 
+They generate the sequence rather than reading it, so **the length and root you
+pass must match what was transmitted**. Getting them wrong fails quietly: on a
+real capture of length 401 root 25, a root of 26 gives peak/mean 1.4 and reads
+as a dead radio, while a length of 400 gives 11.9 — over the threshold, with a
+spacing check that agrees with itself. Copy `zc_reference.fc32` next to the
+capture when you can and both scripts will cross-check against it. See
+[NOTES.md](NOTES.md) §3.10.
+
 It draws three figures — the capture's magnitude, real and imaginary parts; the
 Zadoff-Chu reference it generated; and the correlation, both in full and zoomed
 around the peak — then prints:

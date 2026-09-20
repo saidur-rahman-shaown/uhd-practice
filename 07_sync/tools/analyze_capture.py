@@ -42,6 +42,19 @@ def main():
     cap = np.fromfile(cap_path, dtype=np.complex64)
     ref = np.fromfile(ref_path, dtype=np.complex64)
 
+    # If the reference carries its parameters, regenerate and compare. A
+    # length or root that does not match what was transmitted fails quietly:
+    # measured on a real capture of length 401 root 25, root 26 gives
+    # peak/mean 1.4 (reads as a dead radio) and length 400 gives 11.9, which
+    # is over the threshold with a self-consistent spacing check.
+    if "zc_length" in ref_meta and "zc_root" in ref_meta:
+        n = np.arange(int(ref_meta["zc_length"]), dtype=np.int64)
+        u, L = int(ref_meta["zc_root"]), int(ref_meta["zc_length"])
+        regen = np.exp(-1j*np.pi*np.mod(u*n*(n+1), 2*L)/L).astype(np.complex64)
+        if len(regen) != len(ref) or np.max(np.abs(regen - ref)) > 1e-4:
+            print("  WARNING: reference on disk does not match its own "
+                  "stated length/root")
+
     rate = float(cap_meta.get("rate_hz", 30.72e6))
 
     print(f"  capture   : {len(cap)} samples, {len(cap)/rate*1e3:.1f} ms "
@@ -71,7 +84,8 @@ def main():
 
     if peak / mean < 5:
         print("  NO detection -- that is the noise floor.")
-        print("  Check the transmitter was running and the gain is 80.")
+        print("  Check the transmitter was running, the gain is 80, and that")
+        print("  the length and root match: a root off by one gives 1.4.")
         return 1
 
     # Peak spacing should equal the sequence length, since the transmitter

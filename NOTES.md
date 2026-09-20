@@ -286,7 +286,33 @@ later commands arrive already expired.
 Recovering the real arrival time needs correlation against a known waveform —
 which is what the `zc` path does. Use that instead.
 
-### 3.10 Measurement discipline
+### 3.10 Generating the reference locally is convenient and can lie
+
+The MATLAB scripts build the Zadoff-Chu sequence themselves rather than reading
+the file `zc_transmit` writes, which means a capture can be analysed on its own.
+The cost is that the length and root are assumed, and getting them wrong fails
+quietly. Measured against a real capture of length 401, root 25:
+
+| reference used | peak/mean | reads as |
+|---|---|---|
+| correct, 401 / 25 | 142.4 | detection |
+| root 26 | 1.4 | a dead radio |
+| root 29 | 1.5 | a dead radio |
+| **length 400** | **11.9** | **a detection — and it is wrong** |
+| length 409 | 2.6 | a dead radio |
+| sign flipped, `exp(+j…)` | 1.8 | a dead radio |
+
+The length-400 row is the dangerous one: it clears the detection threshold, and
+the spacing check agrees with itself because it compares against the length it
+was given. Amplitude does not matter — the peak-to-mean ratio is scale
+invariant, so the unscaled reference and the 0.7 transmitted version give the
+same 142.1.
+
+Both scripts now cross-check against `zc_reference.fc32` when it is sitting
+next to the capture, and warn if the generated sequence disagrees. Copy that
+file across when you can; it is 3 kB.
+
+### 3.11 Measurement discipline
 
 Most of the wrong conclusions above came from sloppy measurement rather than
 from the hardware.
@@ -306,7 +332,7 @@ Two shell traps: `pkill -f foo` matches the ssh shell running it and kills your
 session — use `pkill -f "[f]oo"`. And background remote work with
 `setsid nohup … </dev/null &`, or it dies when ssh returns.
 
-### 3.11 USB
+### 3.12 USB
 
 One B210 stopped enumerating entirely: `error -110` descriptor timeouts,
 `device not accepting address, error -62`, and negotiation at USB 2.0

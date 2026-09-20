@@ -40,6 +40,35 @@ function analyze_capture(cap_path, zc_length, zc_root)
     fprintf('  rms       : %.6f   (0.00061 = noise, 0.028 = ZC signal)\n', ...
             sqrt(mean(abs(x).^2)));
 
+    % ---------------------------------------------------------------
+    % If the transmitter's reference is sitting next to the capture,
+    % check the generated sequence against it.
+    %
+    % Generating it locally is convenient but silently wrong if the
+    % length or root do not match what was transmitted. Measured on a
+    % real capture of length 401 root 25: correlating with root 26
+    % gives peak/mean 1.4, which reads as a dead radio, while length
+    % 400 gives 11.9 -- over the detection threshold, with a spacing
+    % check that agrees with itself. That one would be believed.
+    % ---------------------------------------------------------------
+    ref_file = fullfile(fileparts(cap_path), 'zc_reference.fc32');
+
+    if isfile(ref_file)
+        ref = read_fc32(ref_file);
+
+        if numel(ref) ~= N
+            warning('analyze:lengthMismatch', ...
+                ['reference on disk is %d samples but %d was generated -- ' ...
+                 'the transmitter used a different zc_length'], numel(ref), N);
+        elseif max(abs(ref - zc)) > 1e-4
+            warning('analyze:refMismatch', ...
+                ['generated sequence differs from the reference on disk ' ...
+                 '(max %.2e) -- check zc_root'], max(abs(ref - zc)));
+        else
+            fprintf('  reference : cross-checked against %s\n', ref_file);
+        end
+    end
+
     if ~strcmp(getfield_default(meta, 'overflows', '0'), '0')
         fprintf('  WARNING: capture reports %s overflows -- it has gaps\n', ...
                 meta.overflows);
@@ -68,7 +97,9 @@ function analyze_capture(cap_path, zc_length, zc_root)
 
     if pmr < 5
         fprintf('\n  NO detection -- that is the noise floor.\n');
-        fprintf('  Check the transmitter is running and TX gain is 80.\n');
+        fprintf(['  Check the transmitter is running, TX gain is 80, and\n' ...
+                 '  that the length and root match what was transmitted:\n' ...
+                 '  a root off by one gives peak/mean 1.4 on a good capture.\n']);
         return
     end
 

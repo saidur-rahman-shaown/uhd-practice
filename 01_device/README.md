@@ -1,5 +1,11 @@
 # UHD B210 latency experiments
 
+> **New here?** Read [NOTES.md](NOTES.md) first. It explains what each program
+> does, records every trap we hit — several of which fail silently, with the
+> API reporting success while the radio does nothing — and shows how to test
+> the whole thing. This file is the quick command reference.
+
+
 Two Ubuntu NUCs, each with a USRP B210, cabled TX/RX -> RX2 in both directions
 with attenuation in line. Build and run on the NUCs; the Mac has no UHD and is
 for editing and git only.

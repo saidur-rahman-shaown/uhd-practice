@@ -265,6 +265,33 @@ the untuned case as well. The machine was restored to stock afterwards.
 Real-time priority alone remains the best configuration found, and it is
 already in the code. It is not sufficient for reliable 30.72 MS/s.
 
+#### Two-radio TDD over the air (stage E)
+
+One NUC transmits the alternating frame, the other measures the envelope:
+
+```bash
+# transmitter
+./build/tdd_latency_test alt 0.5 60 0.1 80 23.04e6
+# receiver
+python3 /tmp/slotcheck.py 23.04e6 0.5 50
+```
+
+Measured at 23.04 MS/s, 0.5 ms slots, 10 % guard:
+
+| quantity | measured | designed |
+|---|---|---|
+| duty | 44.9 % | 45 % |
+| on-time | 10357 samples = 449.5 us | 10368 = 450 us |
+| on/off | 36.6 dB | - |
+
+Slot edges land within 11 samples of design, at a real 15 MHz NR rate.
+
+**Always set the master clock rate.** The B210 divides it to make the sample
+rate, and the 32 MHz default turns a request for 23.04 MS/s into 16 and
+30.72 MS/s into 32 -- silently, with the wrong rate then measured as though it
+were the one asked for. `set_master_clock_for()` handles this; the `alt` mode
+was missing it and spent a whole test running at 16 MS/s while reporting 23.04.
+
 #### PREEMPT_RT kernel
 
 Ubuntu 26.04 carries a real-time kernel in the normal archive -- no Pro

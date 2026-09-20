@@ -38,6 +38,43 @@
 
 
 // ============================================================
+// Master clock, so a requested rate is actually achievable
+// ============================================================
+
+/*
+ * The B210 makes its sample rate by dividing the master clock, which
+ * defaults to 32 MHz. Asking for a rate that is not a divisor of it
+ * -- every NR rate, as it happens -- silently yields something else:
+ * 30.72 MS/s comes back as 32, and 23.04 as 16. The request appears
+ * to succeed and the wrong rate is then measured as though it were
+ * the one asked for.
+ *
+ * Driving the master clock at the sample rate itself gives a divisor
+ * of one, which is exact.
+ */
+
+void set_master_clock_for(
+    uhd::usrp::multi_usrp::sptr usrp,
+    double rate)
+{
+    if (rate <= 0.0) return;
+
+    if (std::fabs(usrp->get_master_clock_rate() - rate) <= 1.0) return;
+
+    try
+    {
+        usrp->set_master_clock_rate(rate);
+    }
+    catch (const std::exception& e)
+    {
+        std::cout
+            << "  NOTE: master clock " << rate / 1e6
+            << " MHz rejected (" << e.what() << ")\n";
+    }
+}
+
+
+// ============================================================
 // 10. Sustained TDD slot scheduling
 // ============================================================
 
@@ -385,6 +422,8 @@ void run_tdd_alternating(
 
     if (rate > 0.0)
     {
+        set_master_clock_for(usrp, rate);
+
         usrp->set_tx_rate(rate);
         usrp->set_rx_rate(rate);
         cfg.sample_rate = usrp->get_tx_rate();
@@ -409,7 +448,9 @@ void run_tdd_alternating(
         << "Guard   : " << guard_samples << " samples ("
         << guard_frac * 100.0 << " % at the end of each TX slot)\n"
         << "TX gain : " << usrp->get_tx_gain() << " dB\n"
-        << "Rate    : " << cfg.sample_rate / 1e6 << " MS/s each way\n"
+        << "Rate    : " << cfg.sample_rate / 1e6 << " MS/s each way"
+        << "  (master clock " << usrp->get_master_clock_rate() / 1e6
+        << " MHz)\n"
         << "Run     : " << seconds << " s\n\n";
 
     /*
@@ -833,21 +874,7 @@ void run_nr_stage(
      * to be moved to match. Driving it at the sample rate itself
      * gives a divisor of one, which is exact.
      */
-    const double want_mcr = rate;
-
-    if (std::fabs(usrp->get_master_clock_rate() - want_mcr) > 1.0)
-    {
-        try
-        {
-            usrp->set_master_clock_rate(want_mcr);
-        }
-        catch (const std::exception& e)
-        {
-            std::cout
-                << "  NOTE: master clock " << want_mcr / 1e6
-                << " MHz rejected (" << e.what() << ")\n";
-        }
-    }
+    set_master_clock_for(usrp, rate);
 
     if (did_tx) usrp->set_tx_rate(rate);
     if (did_rx) usrp->set_rx_rate(rate);

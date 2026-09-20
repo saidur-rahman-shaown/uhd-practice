@@ -13,9 +13,16 @@ radio does nothing.
 
 ## 1. The programs
 
-Everything lives in `01_device/`. One `cmake --build build` produces all three.
+Each program lives in the lesson directory for its subject; see
+[README.md](README.md) for the layout. One build from the repository root
+produces all of them:
 
-### `latency_test` — host and device timing
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release .
+cmake --build build          # binaries land in build/<lesson>/
+```
+
+### `05_timed_commands/latency_test` — host and device timing
 
 | mode | what it measures |
 |---|---|
@@ -24,13 +31,12 @@ Everything lives in `01_device/`. One `cmake --build build` produces all three.
 | `lead` | minimum scheduling lead time, judged by the device's own reports |
 | `txmeta` | TX async events: `BURST_ACK`, `UNDERFLOW`, `TIME_ERROR` |
 | `rxmeta` | RX errors: deliberately provokes `OVERFLOW` and `LATE_COMMAND` |
-| `zc` | Zadoff-Chu generate and detect, one box (offline self-test plus live) |
-| `zctx` / `zcrx` | Zadoff-Chu across two boxes: sender and detector |
-| `zcseg` | offline self-test of the segmented correlator |
-| `zcdump` | writes one live capture window to disk for offline comparison |
 | `txrx` | **broken**, see §3.9 |
 
-### `tdd_latency_test` — TDD slot timing
+Zadoff-Chu moved out to `07_sync/zc_sync`, which has its own modes: `zcseg`
+(offline self-test, no radio), `single`, `tx`, `rx` and `dump`.
+
+### `06_tdd/tdd_latency_test` — TDD slot timing
 
 | mode | what it does |
 |---|---|
@@ -43,14 +49,14 @@ Slot length defaults to **0.5 ms** in every mode — one NR slot at 30 kHz
 subcarrier spacing, which is the numerology these experiments target. At
 30.72 MS/s that is 15360 samples per slot.
 
-### `async_events` — a guided tour of UHD's status characters
+### `04_metadata/async_events` — a guided tour of UHD's status characters
 
 UHD prints one character straight to stderr per problem, inline and with no
 newline: `U` underflow, `L` late packet, `S` sequence error, `O` overflow, `D`
 dropped. Silence is the healthy case, which makes them hard to learn from. Each
 mode provokes one on demand and prints the decoded message underneath.
 
-### `rx_capture` — record samples to disk
+### `07_sync/rx_capture` — record samples to disk
 
 ```bash
 ./rx_capture <outfile> [seconds] [rate] [freq_MHz] [gain]
@@ -64,7 +70,7 @@ overflows has gaps in the middle.
 At 30.72 MS/s that is 8 bytes per sample, so **246 MB/s to disk**. Write into
 `/dev/shm`, which is RAM, and keep the run short.
 
-### `zc_transmit` — transmit Zadoff-Chu, and save the reference
+### `07_sync/zc_transmit` — transmit Zadoff-Chu, and save the reference
 
 ```bash
 ./zc_transmit [seconds] [gain] [rate] [zc_length] [zc_root] [freq_MHz] [ref_path]
@@ -75,7 +81,7 @@ to `/tmp/zc_reference.fc32`, so offline correlation uses the same samples that
 were sent rather than a reconstruction that might disagree about the sign
 convention.
 
-### `tools/analyze_capture.py` — offline correlation
+### `07_sync/tools/analyze_capture.py` — offline correlation
 
 ```bash
 ./tools/analyze_capture.py /dev/shm/cap.fc32 /tmp/zc_reference.fc32
@@ -85,7 +91,7 @@ Reads both sidecars, correlates, and checks that the peak spacing equals the
 sequence length — which is what distinguishes a real detection from the
 startup artefact of §3.3.
 
-### `tools/zc_tx.py` — reference transmitter
+### `07_sync/tools/zc_tx.py` — reference transmitter
 
 A known-good Python sender of the same Zadoff-Chu waveform. Its real job is
 diagnostic: when the C++ side looks dead, this tells you in thirty seconds

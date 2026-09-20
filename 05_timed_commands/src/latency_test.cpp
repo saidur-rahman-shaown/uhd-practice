@@ -15,50 +15,6 @@
 #include <vector>
 
 // ============================================================
-// Statistics
-// ============================================================
-
-struct Statistics
-{
-    double min = 0;
-    double max = 0;
-    double mean = 0;
-    double median = 0;
-};
-
-
-Statistics calculate_stats(std::vector<double> values)
-{
-    Statistics s{};
-
-    if (values.empty())
-        return s;
-
-    std::sort(values.begin(), values.end());
-
-    s.min = values.front();
-    s.max = values.back();
-
-    s.mean =
-        std::accumulate(values.begin(), values.end(), 0.0)
-        / static_cast<double>(values.size());
-
-    if (values.size() % 2 == 0)
-    {
-        s.median =
-            (values[values.size() / 2 - 1]
-             + values[values.size() / 2]) / 2.0;
-    }
-    else
-    {
-        s.median = values[values.size() / 2];
-    }
-
-    return s;
-}
-
-
-// ============================================================
 // 1. Measure send() execution time
 // ============================================================
 
@@ -339,27 +295,6 @@ void find_minimum_safe_lead(
         << "shorter than this cannot be scheduled per-slot from the\n"
         << "host; the schedule has to be built further ahead, as a\n"
         << "run of bursts queued in advance with absolute timestamps.\n";
-}
-
-
-// ============================================================
-// RX helper
-// ============================================================
-
-void start_timed_rx(
-    uhd::rx_streamer::sptr rx_stream,
-    uhd::time_spec_t rx_time,
-    size_t num_samples)
-{
-    uhd::stream_cmd_t cmd(
-        uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
-
-    cmd.num_samps = num_samples;
-
-    cmd.stream_now = false;
-    cmd.time_spec = rx_time;
-
-    rx_stream->issue_stream_cmd(cmd);
 }
 
 
@@ -1125,12 +1060,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
             << "  ./latency_test recv\n"
             << "  ./latency_test txmeta\n"
             << "  ./latency_test rxmeta\n"
-            << "  ./latency_test zc\n"
-            << "  ./latency_test zctx [seconds] [tx_gain]  (two-host: sender)\n"
-            << "  ./latency_test zcrx [seconds] [segments] [threshold] [rx_gain]\n"
-            << "  ./latency_test zcseg            (offline detector self-test)\n"
-            << "  ./latency_test zcdump [rx_gain] (dump one live window)\n"
-            << "  ./latency_test all\n";
+            << "  ./latency_test all\n\n"
+            << "Zadoff-Chu generation and detection moved to 07_sync/zc_sync.\n";
 
         return 1;
     }

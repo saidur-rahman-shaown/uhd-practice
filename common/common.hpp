@@ -7,7 +7,9 @@
 #include <uhd/usrp/multi_usrp.hpp>
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <complex>
 #include <iostream>
 #include <cstdlib>
@@ -254,4 +256,69 @@ inline void set_master_clock_for(
 inline size_t send_buffer_samples(double sample_rate)
 {
     return static_cast<size_t>(sample_rate * 0.010);
+}
+
+
+// ============================================================
+// Statistics
+// ============================================================
+
+struct Statistics
+{
+    double min = 0;
+    double max = 0;
+    double mean = 0;
+    double median = 0;
+};
+
+
+inline Statistics calculate_stats(std::vector<double> values)
+{
+    Statistics s{};
+
+    if (values.empty())
+        return s;
+
+    std::sort(values.begin(), values.end());
+
+    s.min = values.front();
+    s.max = values.back();
+
+    s.mean =
+        std::accumulate(values.begin(), values.end(), 0.0)
+        / static_cast<double>(values.size());
+
+    if (values.size() % 2 == 0)
+    {
+        s.median =
+            (values[values.size() / 2 - 1]
+             + values[values.size() / 2]) / 2.0;
+    }
+    else
+    {
+        s.median = values[values.size() / 2];
+    }
+
+    return s;
+}
+
+
+// ============================================================
+// RX helper
+// ============================================================
+
+inline void start_timed_rx(
+    uhd::rx_streamer::sptr rx_stream,
+    uhd::time_spec_t rx_time,
+    size_t num_samples)
+{
+    uhd::stream_cmd_t cmd(
+        uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+
+    cmd.num_samps = num_samples;
+
+    cmd.stream_now = false;
+    cmd.time_spec = rx_time;
+
+    rx_stream->issue_stream_cmd(cmd);
 }

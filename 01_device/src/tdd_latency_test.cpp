@@ -42,6 +42,27 @@
 
 
 // ============================================================
+// How much to hand the device per send()
+// ============================================================
+
+/*
+ * Buffer depth has to be measured in time, not in samples. A fixed
+ * sample count means a buffer that shrinks as the rate rises: 16k
+ * samples is 16 ms at 1 MS/s but only half a millisecond at
+ * 30.72 MS/s, which is nowhere near enough to ride out host jitter.
+ * Sizing the same buffer by time instead took one 30.72 MS/s run
+ * from 74 underflows to none.
+ *
+ * Ten milliseconds is comfortable at every rate used here.
+ */
+
+size_t send_buffer_samples(double sample_rate)
+{
+    return static_cast<size_t>(sample_rate * 0.010);
+}
+
+
+// ============================================================
 // Master clock, so a requested rate is actually achievable
 // ============================================================
 
@@ -282,7 +303,10 @@ void run_tdd_stream(
      * keep the device fed comfortably.
      */
     const size_t slots_per_buffer =
-        std::max<size_t>(1, 16000 / std::max<size_t>(1, slot_samples));
+        std::max<size_t>(
+            1,
+            send_buffer_samples(cfg.sample_rate)
+                / std::max<size_t>(1, slot_samples));
 
     const auto tone =
         make_waveform(on_samples, cfg.sample_rate, 10e3);
@@ -490,11 +514,12 @@ void run_tdd_alternating(
         frame.push_back(complex_t(0.0f, 0.0f));
 
     /*
-     * Repeat the pair until the buffer is big enough to keep the
+     * Repeat the pair until the buffer holds enough time to keep the
      * device fed without the host having to hit a deadline.
      */
     const size_t pairs =
-        std::max<size_t>(1, 16000 / frame.size());
+        std::max<size_t>(
+            1, send_buffer_samples(cfg.sample_rate) / frame.size());
 
     std::vector<complex_t> tx_buffer;
     tx_buffer.reserve(frame.size() * pairs);
@@ -506,7 +531,10 @@ void run_tdd_alternating(
 
     std::cout
         << "TX buffer = " << tx_buffer.size()
-        << " samples (" << pairs * 2 << " slots per send)\n\n";
+        << " samples (" << pairs * 2 << " slots, "
+        << std::fixed << std::setprecision(1)
+        << double(tx_buffer.size()) / cfg.sample_rate * 1e3
+        << " ms) per send\n\n";
 
     std::atomic<size_t> underflows{0};
     std::atomic<bool> running{true};
@@ -973,22 +1001,20 @@ void run_nr_stage(
              * at 30.72 MS/s a fixed 60k samples is barely 2 ms of
              * data, which is not enough to ride out host jitter.
              */
-            const size_t target =
-                static_cast<size_t>(cfg.sample_rate * 0.010);
-
             const size_t reps =
-                std::max<size_t>(1, target / pair.size());
+                std::max<size_t>(
+                    1,
+                    send_buffer_samples(cfg.sample_rate) / pair.size());
 
             for (size_t r = 0; r < reps; ++r)
                 tx_buffer.insert(tx_buffer.end(), pair.begin(), pair.end());
         }
         else
         {
-            const size_t target =
-                static_cast<size_t>(cfg.sample_rate * 0.010);
-
             const size_t reps =
-                std::max<size_t>(1, target / slot_samples);
+                std::max<size_t>(
+                    1,
+                    send_buffer_samples(cfg.sample_rate) / slot_samples);
 
             for (size_t r = 0; r < reps; ++r)
                 for (size_t n = 0; n < slot_samples; ++n)

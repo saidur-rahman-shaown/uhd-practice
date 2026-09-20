@@ -164,9 +164,16 @@ wrong approach fail.
 
 ### 3.5 Buffer sizing, measured in time rather than samples
 
-The transmit buffer was a fixed sample count. At 30.72 MS/s that is about 1 ms
-of data — far too little to ride out host jitter. Sizing it by time instead
-(10 ms) took one run from 74 underflows to zero.
+The transmit buffer was a fixed sample count. A fixed count means a buffer that
+shrinks as the rate rises: 16k samples is 16 ms at 1 MS/s but half a
+millisecond at 30.72 MS/s — nowhere near enough to ride out host jitter.
+Sizing it by time instead (10 ms) took one run from 74 underflows to zero.
+
+This bug was fixed once in the `nr` stage and left in place in `alt` and
+`stream`, where it stayed for several more test rounds. `send_buffer_samples()`
+is now the single place that decides buffer depth, and the reported figure
+includes the time as well as the sample count so a shrinking buffer is visible
+in the output.
 
 Feeding the device one 1604-sample burst per call also starves it. Batch
 several repetitions into one send.

@@ -303,8 +303,12 @@ was missing it and spent a whole test running at 16 MS/s while reporting 23.04.
 
 #### Reaching 30.72 MS/s: use a narrower wire format
 
+`sc12` is now the default for every stream in every program. Use `NR_OTW` to
+compare:
+
 ```bash
-NR_OTW=sc12 ./build/tdd_latency_test nr tdd 30.72e6 60
+./build/tdd_latency_test nr tdd 30.72e6 60             # sc12, the default
+NR_OTW=sc16 ./build/tdd_latency_test nr tdd 30.72e6 60  # for comparison
 ```
 
 `sc16` sends four bytes per complex sample, so 30.72 MS/s in both directions is

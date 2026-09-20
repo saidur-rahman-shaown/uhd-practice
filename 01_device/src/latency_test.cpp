@@ -73,7 +73,7 @@ void measure_send_execution(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     auto samples =
         make_waveform(
@@ -192,7 +192,7 @@ LeadResult probe_lead_time(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     const auto samples =
         make_waveform(slot_samples, cfg.sample_rate, 10e3);
@@ -378,11 +378,11 @@ void measure_tx_rx_timestamp_latency(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     auto rx_stream =
         usrp->get_rx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     auto tx_samples =
         make_waveform(
@@ -564,7 +564,7 @@ void measure_host_recv_time(
 
     auto rx_stream =
         usrp->get_rx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     std::vector<complex_t> buffer(
         rx_stream->get_max_num_samps());
@@ -667,7 +667,7 @@ void monitor_tx_metadata(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     auto samples =
         make_waveform(
@@ -833,7 +833,7 @@ void monitor_rx_metadata(
 
     auto rx_stream =
         usrp->get_rx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     std::vector<complex_t> buffer(
         rx_stream->get_max_num_samps());
@@ -1268,11 +1268,11 @@ void run_zadoff_chu_test(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     auto rx_stream =
         usrp->get_rx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     /*
      * Capture window: open it before TX and keep it open past the
@@ -1670,7 +1670,7 @@ void zc_dump_window(
     const auto zc = make_zadoff_chu(zc_length, 25);
 
     auto rx_stream =
-        usrp->get_rx_stream(uhd::stream_args_t("fc32", "sc16"));
+        usrp->get_rx_stream(uhd::stream_args_t("fc32", otw_format()));
 
     uhd::stream_cmd_t cmd(
         uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
@@ -1802,7 +1802,7 @@ void transmit_zadoff_chu(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     std::cout
         << "Transmitting ZC (length " << zc_length
@@ -1901,7 +1901,7 @@ void receive_zadoff_chu(
 
     auto rx_stream =
         usrp->get_rx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     uhd::stream_cmd_t cmd(
         uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);

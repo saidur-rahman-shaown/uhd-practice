@@ -203,7 +203,9 @@ enough to the ceiling that it passed only sometimes.
 converters**, so `sc12` carries every bit the radio produces and `sc16` merely
 pads with zeros. 25 % less USB traffic for no loss in dynamic range.
 
-**There is little reason to use `sc16` on a B210 at any rate.**
+**There is little reason to use `sc16` on a B210 at any rate**, so `sc12` is
+the default for every stream in all three programs. `NR_OTW=sc16` overrides it
+for comparison.
 
 ### 3.8 Host tuning that did not help
 
@@ -368,7 +370,7 @@ reference sender for telling hardware from software.
 
 | setting | value | why |
 |---|---|---|
-| wire format | `sc12` | §3.7 — free on a 12-bit converter |
+| wire format | `sc12` (default) | §3.7 — free on a 12-bit converter |
 | master clock | equal to the sample rate | §3.2 — or you get a different rate |
 | TX buffer | sized by time, ~10 ms | §3.5 |
 | TX gain | 80 | lower is undetectable through the attenuator |

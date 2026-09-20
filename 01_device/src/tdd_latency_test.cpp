@@ -41,28 +41,6 @@
  */
 
 
-/*
- * The over-the-wire format decides how much USB bandwidth a given
- * sample rate costs. sc16 sends four bytes per complex sample, so
- * 30.72 MS/s in both directions is about 246 MB/s -- roughly 2 Gbps,
- * against maybe 3.2 Gbps of usable USB 3. That is close enough to
- * the ceiling to explain why it works sometimes and not others.
- *
- * sc12 and sc8 trade dynamic range for bandwidth: three bytes per
- * sample and two, so the same rate costs 75% or 50% as much. The
- * B210 converts in the FPGA, so nothing is asked of the host.
- *
- *   NR_OTW=sc12 ./tdd_latency_test nr tdd 30.72e6 60
- */
-
-std::string otw_format()
-{
-    const char* v = std::getenv("NR_OTW");
-
-    return v ? std::string(v) : std::string("sc16");
-}
-
-
 // ============================================================
 // Master clock, so a requested rate is actually achievable
 // ============================================================
@@ -144,7 +122,7 @@ void run_tdd_slots(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     const auto samples =
         make_waveform(slot_samples, cfg.sample_rate, 10e3);
@@ -297,7 +275,7 @@ void run_tdd_stream(
 
     auto tx_stream =
         usrp->get_tx_stream(
-            uhd::stream_args_t("fc32", "sc16"));
+            uhd::stream_args_t("fc32", otw_format()));
 
     /*
      * One frame buffer holding a whole number of slots, sized to

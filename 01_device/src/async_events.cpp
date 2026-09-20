@@ -57,7 +57,7 @@ void demo_ack(uhd::usrp::multi_usrp::sptr usrp, const Config& cfg)
         << "warning for the device. Nothing should be printed to\n"
         << "stderr at all.\n\n";
 
-    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", "sc16"));
+    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", otw_format()));
     const auto samples = make_waveform(2000, cfg.sample_rate, 10e3);
 
     size_t acks = 0, others = 0;
@@ -111,7 +111,7 @@ void demo_late(uhd::usrp::multi_usrp::sptr usrp, const Config& cfg)
         << "TIME_ERROR. Note that send() still succeeds -- the host\n"
         << "handed over the samples, which is all send() promises.\n\n";
 
-    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", "sc16"));
+    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", otw_format()));
     const auto samples = make_waveform(2000, cfg.sample_rate, 10e3);
 
     size_t late = 0, acks = 0, sent_ok = 0;
@@ -164,7 +164,7 @@ void demo_underflow(uhd::usrp::multi_usrp::sptr usrp, const Config& cfg)
         << "samples; if the host stops feeding it, the transmitter\n"
         << "runs dry mid-burst and reports UNDERFLOW.\n\n";
 
-    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", "sc16"));
+    auto tx = usrp->get_tx_stream(uhd::stream_args_t("fc32", otw_format()));
     const auto samples = make_waveform(4000, cfg.sample_rate, 10e3);
 
     uhd::tx_metadata_t md;
@@ -242,7 +242,7 @@ void demo_overflow(uhd::usrp::multi_usrp::sptr usrp, const Config& cfg)
         << " MS/s for this test -- at 1 MS/s the buffers absorb\n"
         << "   the stall and nothing is lost)\n\n";
 
-    auto rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", "sc16"));
+    auto rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", otw_format()));
     std::vector<complex_t> buf(rx->get_max_num_samps());
 
     uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
@@ -295,7 +295,7 @@ void demo_late_command(uhd::usrp::multi_usrp::sptr usrp, const Config& cfg)
         << "device to start receiving at a time that has already\n"
         << "passed.\n\n";
 
-    auto rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", "sc16"));
+    auto rx = usrp->get_rx_stream(uhd::stream_args_t("fc32", otw_format()));
     std::vector<complex_t> buf(rx->get_max_num_samps());
 
     uhd::stream_cmd_t cmd(

@@ -10,6 +10,7 @@
 #include <cmath>
 #include <complex>
 #include <iostream>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -168,4 +169,31 @@ const char* rx_error_to_string(
         default:
             return "UNKNOWN";
     }
+}
+
+
+// ============================================================
+// Over-the-wire sample format
+// ============================================================
+
+/*
+ * How many bytes each complex sample costs on the USB link.
+ *
+ * sc12 is the default because it is free on this hardware: the
+ * B210's AD9361 has 12-bit converters, so sc12 carries every bit the
+ * radio produces and sc16 merely pads each sample with zeros. The
+ * padding is not harmless at high rates -- 30.72 MS/s in both
+ * directions is about 246 MB/s under sc16 against roughly 184 under
+ * sc12, and the first figure is close enough to the usable USB 3
+ * ceiling to underflow. Measured over sixty-second runs, sc16 passed
+ * 2 of 3 and sc12 passed 9 of 9.
+ *
+ * Override for comparisons:  NR_OTW=sc16 ./tdd_latency_test ...
+ */
+
+inline std::string otw_format()
+{
+    const char* v = std::getenv("NR_OTW");
+
+    return v ? std::string(v) : std::string("sc12");
 }

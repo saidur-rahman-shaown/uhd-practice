@@ -44,3 +44,21 @@ target_link_libraries(async_events
     PRIVATE
     UHD::uhd
 )
+
+add_executable(rx_capture
+    src/rx_capture.cpp
+)
+
+target_link_libraries(rx_capture
+    PRIVATE
+    UHD::uhd
+)
+
+add_executable(zc_transmit
+    src/zc_transmit.cpp
+)
+
+target_link_libraries(zc_transmit
+    PRIVATE
+    UHD::uhd
+)

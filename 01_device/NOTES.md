@@ -49,6 +49,41 @@ newline: `U` underflow, `L` late packet, `S` sequence error, `O` overflow, `D`
 dropped. Silence is the healthy case, which makes them hard to learn from. Each
 mode provokes one on demand and prints the decoded message underneath.
 
+### `rx_capture` — record samples to disk
+
+```bash
+./rx_capture <outfile> [seconds] [rate] [freq_MHz] [gain]
+```
+
+Writes raw interleaved complex float32 (UHD's `fc32`) plus a `.txt` sidecar
+carrying the rate, frequency, gain, first device timestamp and overflow count —
+because a capture without its sample rate is not analysable, and one with
+overflows has gaps in the middle.
+
+At 30.72 MS/s that is 8 bytes per sample, so **246 MB/s to disk**. Write into
+`/dev/shm`, which is RAM, and keep the run short.
+
+### `zc_transmit` — transmit Zadoff-Chu, and save the reference
+
+```bash
+./zc_transmit [seconds] [gain] [rate] [zc_length] [zc_root] [freq_MHz] [ref_path]
+```
+
+Transmits the sequence back to back and writes the **exact reference waveform**
+to `/tmp/zc_reference.fc32`, so offline correlation uses the same samples that
+were sent rather than a reconstruction that might disagree about the sign
+convention.
+
+### `tools/analyze_capture.py` — offline correlation
+
+```bash
+./tools/analyze_capture.py /dev/shm/cap.fc32 /tmp/zc_reference.fc32
+```
+
+Reads both sidecars, correlates, and checks that the peak spacing equals the
+sequence length — which is what distinguishes a real detection from the
+startup artefact of §3.3.
+
 ### `tools/zc_tx.py` — reference transmitter
 
 A known-good Python sender of the same Zadoff-Chu waveform. Its real job is
@@ -356,6 +391,45 @@ ssh shaown@192.168.0.103 'python3 /tmp/slotcheck.py 30.72e6 0.5 50'
 
 The `setsid nohup … </dev/null &` matters. Without it the sender dies when ssh
 returns, and you measure noise while believing you are measuring a transmitter.
+
+### Capture for offline analysis
+
+```bash
+# .102 — transmit, and save the reference it is sending
+./build/zc_transmit 45 80 30.72e6 401 25
+
+# .103 — capture one second into RAM
+./build/rx_capture /dev/shm/cap.fc32 1 30.72e6 3515 50
+
+# copy the reference across, then correlate
+scp shaown@192.168.0.102:/tmp/zc_reference.fc32* /tmp/
+./tools/analyze_capture.py /dev/shm/cap.fc32 /tmp/zc_reference.fc32
+```
+
+A healthy result looks like:
+
+```
+captured  : 30722400 samples, overflows 0, Clean capture: no gaps.
+rms       : 0.059006
+peak/mean : 76.6
+spacing   : 400 samples (expect 401, the sequence length)
+DETECTED, spacing matches the sequence length
+```
+
+The spacing check matters more than the peak height. A large peak at a random
+offset is the startup transient of §3.3; a peak every 401 samples is the
+sequence.
+
+Reading the files elsewhere — both are raw interleaved complex float32:
+
+```python
+x = np.fromfile("cap.fc32", dtype=np.complex64)
+```
+
+```matlab
+f = fopen('cap.fc32','r'); x = fread(f,'float32'); fclose(f);
+x = complex(x(1:2:end), x(2:2:end));
+```
 
 ### When nothing is received
 

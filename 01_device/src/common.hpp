@@ -197,3 +197,61 @@ inline std::string otw_format()
 
     return v ? std::string(v) : std::string("sc12");
 }
+
+
+// ============================================================
+// Master clock, so a requested rate is actually achievable
+// ============================================================
+
+/*
+ * The B210 makes its sample rate by dividing the master clock, which
+ * defaults to 32 MHz. Asking for a rate that is not a divisor of it
+ * -- every NR rate, as it happens -- silently yields something else:
+ * 30.72 MS/s comes back as 32, and 23.04 as 16. The request appears
+ * to succeed and the wrong rate is then measured as though it were
+ * the one asked for.
+ *
+ * Driving the master clock at the sample rate itself gives a divisor
+ * of one, which is exact.
+ */
+
+inline void set_master_clock_for(
+    uhd::usrp::multi_usrp::sptr usrp,
+    double rate)
+{
+    if (rate <= 0.0) return;
+
+    if (std::fabs(usrp->get_master_clock_rate() - rate) <= 1.0) return;
+
+    try
+    {
+        usrp->set_master_clock_rate(rate);
+    }
+    catch (const std::exception& e)
+    {
+        std::cout
+            << "  NOTE: master clock " << rate / 1e6
+            << " MHz rejected (" << e.what() << ")\n";
+    }
+}
+
+
+// ============================================================
+// How much to hand the device per send()
+// ============================================================
+
+/*
+ * Buffer depth has to be measured in time, not in samples. A fixed
+ * sample count means a buffer that shrinks as the rate rises: 16k
+ * samples is 16 ms at 1 MS/s but only half a millisecond at
+ * 30.72 MS/s, which is nowhere near enough to ride out host jitter.
+ * Sizing the same buffer by time instead took one 30.72 MS/s run
+ * from 74 underflows to none.
+ *
+ * Ten milliseconds is comfortable at every rate used here.
+ */
+
+inline size_t send_buffer_samples(double sample_rate)
+{
+    return static_cast<size_t>(sample_rate * 0.010);
+}

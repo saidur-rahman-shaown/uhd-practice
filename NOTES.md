@@ -1,6 +1,7 @@
 # UHD B210 experiments — what we built and what bit us
 
-Field notes from building a set of timing experiments on two Intel NUCs, each
+Field notes from the experiments in this repository — see [README.md](README.md)
+for the layout. Written while building a set of timing experiments on two Intel NUCs, each
 with a USRP B210, cabled TX/RX to RX2 in both directions with attenuation in
 line.
 

@@ -34,6 +34,10 @@
  * Both judge the outcome by the device's async reports rather than by
  * send() returning, because send() accepts a burst whose time has
  * already passed and the device then drops it without complaint.
+ *
+ * Slot length defaults to 0.5 ms throughout: that is one NR slot at
+ * 30 kHz subcarrier spacing, which is the numerology these
+ * experiments target. Pass a different figure to override it.
  */
 
 
@@ -117,7 +121,7 @@ void set_master_clock_for(
 void run_tdd_slots(
     uhd::usrp::multi_usrp::sptr usrp,
     const Config& cfg,
-    double slot_ms = 1.0,
+    double slot_ms = 0.5,
     size_t num_slots = 1000,
     double pipeline_ms = 20.0)
 {
@@ -270,7 +274,7 @@ void run_tdd_slots(
 void run_tdd_stream(
     uhd::usrp::multi_usrp::sptr usrp,
     const Config& cfg,
-    double slot_ms = 1.0,
+    double slot_ms = 0.5,
     double seconds = 5.0,
     double duty = 0.5)
 {
@@ -426,7 +430,7 @@ void run_tdd_stream(
 void run_tdd_alternating(
     uhd::usrp::multi_usrp::sptr usrp,
     const Config& cfg_in,
-    double slot_ms = 1.0,
+    double slot_ms = 0.5,
     double seconds = 5.0,
     double guard_frac = 0.1,
     double tx_gain = 80.0,
@@ -1262,7 +1266,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     {
         run_tdd_slots(
             usrp, cfg,
-            argc >= 3 ? std::stod(argv[2]) : 1.0,
+            argc >= 3 ? std::stod(argv[2]) : 0.5,
             argc >= 4 ? static_cast<size_t>(std::stoul(argv[3])) : 1000,
             argc >= 5 ? std::stod(argv[4]) : 20.0);
     }
@@ -1270,7 +1274,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     {
         run_tdd_stream(
             usrp, cfg,
-            argc >= 3 ? std::stod(argv[2]) : 1.0,
+            argc >= 3 ? std::stod(argv[2]) : 0.5,
             argc >= 4 ? std::stod(argv[3]) : 5.0,
             argc >= 5 ? std::stod(argv[4]) : 0.5);
     }
@@ -1278,7 +1282,7 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     {
         run_tdd_alternating(
             usrp, cfg,
-            argc >= 3 ? std::stod(argv[2]) : 1.0,
+            argc >= 3 ? std::stod(argv[2]) : 0.5,
             argc >= 4 ? std::stod(argv[3]) : 5.0,
             argc >= 5 ? std::stod(argv[4]) : 0.1,
             argc >= 6 ? std::stod(argv[5]) : 80.0,
@@ -1310,8 +1314,8 @@ int UHD_SAFE_MAIN(int argc, char* argv[])
     }
     else if (mode == "both")
     {
-        run_tdd_slots(usrp, cfg, 1.0, 1000, 20.0);
-        run_tdd_stream(usrp, cfg, 1.0, 5.0, 0.5);
+        run_tdd_slots(usrp, cfg, 0.5, 1000, 20.0);
+        run_tdd_stream(usrp, cfg, 0.5, 5.0, 0.5);
     }
     else
     {

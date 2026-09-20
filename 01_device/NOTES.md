@@ -38,6 +38,10 @@ Everything lives in `01_device/`. One `cmake --build build` produces all three.
 | `alt` | alternating TX-RX-TX-RX frame, both directions at once |
 | `nr <stage>` | staged feasibility test: `txonly`, `rxonly`, `both`, `tdd`, `all` |
 
+Slot length defaults to **0.5 ms** in every mode — one NR slot at 30 kHz
+subcarrier spacing, which is the numerology these experiments target. At
+30.72 MS/s that is 15360 samples per slot.
+
 ### `async_events` — a guided tour of UHD's status characters
 
 UHD prints one character straight to stderr per problem, inline and with no

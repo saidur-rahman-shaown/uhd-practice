@@ -115,10 +115,13 @@ The overflow demo raises the sample rate to 20 MS/s for its duration -- at
 A separate program, `tdd_latency_test`, built from the same directory.
 
 ```bash
-./build/tdd_latency_test stream 1.0 10 0.5   # slot_ms, seconds, duty  -- works
-./build/tdd_latency_test slots  1.0 1000 20  # slot_ms, slots, pipeline_ms -- fails
+./build/tdd_latency_test stream 0.5 10 0.5   # slot_ms, seconds, duty  -- works
+./build/tdd_latency_test slots  0.5 1000 20  # slot_ms, slots, pipeline_ms -- fails
 ./build/tdd_latency_test both
 ```
+
+Slot length defaults to 0.5 ms throughout -- one NR slot at 30 kHz subcarrier
+spacing, the numerology these experiments target.
 
 `slots` schedules one self-contained burst per slot. This is the obvious way to
 build a frame and it does not work: at a 1 ms cadence only half the slots are

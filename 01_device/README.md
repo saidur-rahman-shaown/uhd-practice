@@ -265,6 +265,38 @@ the untuned case as well. The machine was restored to stock afterwards.
 Real-time priority alone remains the best configuration found, and it is
 already in the code. It is not sufficient for reliable 30.72 MS/s.
 
+#### PREEMPT_RT kernel
+
+Ubuntu 26.04 carries a real-time kernel in the normal archive -- no Pro
+subscription needed:
+
+```bash
+sudo apt-get install linux-image-realtime   # then reboot
+uname -v                                    # should say PREEMPT_RT
+```
+
+The stock kernel already runs `full (lazy)` preemption, so switching the
+preemption model gains nothing; only a real PREEMPT_RT build changes anything.
+
+Results, 0.5 ms slots, 60 s runs, on 7.0.0-31-realtime:
+
+| rate | runs | result |
+|---|---|---|
+| 30.72 MS/s | 12 | **5 pass, 7 fail** (0 to 93 underflows) |
+| 23.04 MS/s | 6 | **6 pass**, zero underflows |
+| 15.36 MS/s | 6 | **6 pass**, zero underflows |
+
+So the real-time kernel did **not** make 30.72 MS/s reliable. It is about the
+same as the stock kernel with real-time priority.
+
+A warning about sampling: the first 9 runs after boot were 9 for 9, including
+3 for 3 at 30.72 MS/s, which looked like a clean result. Six more runs at the
+same rate gave 5 failures with up to 93 underflows. Three runs is not enough to
+tell apart a marginal configuration from a working one here.
+
+**23.04 MS/s is the highest rate that passed every attempt** -- a 15 MHz NR
+channel at 30 kHz SCS. 15.36 MS/s (10 MHz) is equally solid.
+
 ## Is anything actually being transmitted?
 
 The check that settles device-versus-code arguments. On the receiving box:

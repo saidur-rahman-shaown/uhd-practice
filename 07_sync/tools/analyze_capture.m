@@ -1,7 +1,7 @@
 function analyze_capture(cap_path, ref_path)
 %ANALYZE_CAPTURE  Correlate an rx_capture file against a zc_transmit reference.
 %
-%   analyze_capture('cap.fc32', 'zc_reference.fc32')
+%   analyze_capture('~/captures/cap.fc32', '~/captures/zc_reference.fc32')
 %   analyze_capture                     % uses the defaults below
 %
 % Both files are raw interleaved complex float32, which is what UHD produces
@@ -13,8 +13,8 @@ function analyze_capture(cap_path, ref_path)
 % peak at an arbitrary offset is the stream-startup transient, which
 % correlates against anything; a peak every N samples is the sequence.
 
-    if nargin < 1, cap_path = 'cap.fc32'; end
-    if nargin < 2, ref_path = 'zc_reference.fc32'; end
+    if nargin < 1, cap_path = '~/captures/cap.fc32'; end
+    if nargin < 2, ref_path = '~/captures/zc_reference.fc32'; end
 
     cap_meta = read_sidecar(cap_path);
     ref_meta = read_sidecar(ref_path);
@@ -35,9 +35,10 @@ function analyze_capture(cap_path, ref_path)
                 cap_meta.overflows);
     end
 
-    % Correlate over a few repetitions; the sequence repeats, so there is no
-    % point searching the whole capture.
-    win = min(numel(x), 8*N);
+    % Correlate over a couple of hundred repetitions. Eight is enough to find
+    % the sequence, but the carrier-offset estimate below averages the phase
+    % step between repetitions and needs more of them to be worth trusting.
+    win = min(numel(x), 200*N);
     seg = x(1:win);
 
     % Matched filter: conv with the time-reversed conjugate is the same as

@@ -208,16 +208,22 @@ python3 07_sync/tools/slotcheck.py 30.72e6 0.5 50
 # .102 — transmit, and write the exact reference being sent
 ./build/07_sync/zc_transmit 45 80 30.72e6 401 25
 
-# .103 — capture one second into RAM
-./build/07_sync/rx_capture /dev/shm/cap.fc32 1 30.72e6 3515 50
+# .103 — capture one second
+mkdir -p ~/captures
+./build/07_sync/rx_capture ~/captures/cap.fc32 1 30.72e6 3515 50
 
 # bring the reference across
-scp shaown@192.168.0.102:/tmp/zc_reference.fc32* /dev/shm/
+scp shaown@192.168.0.102:/tmp/zc_reference.fc32* ~/captures/
 ```
 
-At 30.72 MS/s a capture is **246 MB/s to disk**. Write into `/dev/shm`, which
-is RAM, and keep the run short. `rx_capture` reports overflows; a capture with
-overflows has gaps in the middle and its timing cannot be trusted.
+At 30.72 MS/s a capture is **246 MB/s to disk** — one second is 246 MB. The
+NVMe in these NUCs sustains it comfortably (measured 27.9 MS/s to disk, no
+overflows), so capture somewhere persistent rather than into `/dev/shm`:
+files there were observed disappearing between sessions, which is a
+frustrating way to lose a capture.
+
+`rx_capture` reports overflows. A capture with overflows has gaps in the middle
+and its timing cannot be trusted.
 
 ## Driving both from a laptop
 
@@ -226,8 +232,8 @@ ssh shaown@192.168.0.102 'cd ~/uhd-practice; \
   setsid nohup ./build/07_sync/zc_transmit 45 80 30.72e6 401 25 \
   >/tmp/tx.log 2>&1 </dev/null &'
 sleep 10
-ssh shaown@192.168.0.103 'cd ~/uhd-practice && \
-  ./build/07_sync/rx_capture /dev/shm/cap.fc32 1 30.72e6 3515 50'
+ssh shaown@192.168.0.103 'mkdir -p ~/captures && cd ~/uhd-practice && \
+  ./build/07_sync/rx_capture ~/captures/cap.fc32 1 30.72e6 3515 50'
 ```
 
 The `setsid nohup … </dev/null &` matters. Without it the sender dies when ssh
@@ -249,7 +255,7 @@ whole job and plots the result:
 
 ```matlab
 cd 07_sync/tools
-analyze_capture('/dev/shm/cap.fc32', '/dev/shm/zc_reference.fc32')
+analyze_capture('~/captures/cap.fc32', '~/captures/zc_reference.fc32')
 ```
 
 ```
@@ -268,7 +274,7 @@ The pieces, if you would rather do it by hand:
 
 ```matlab
 % read interleaved complex float32
-f = fopen('/dev/shm/cap.fc32','r');
+f = fopen('~/captures/cap.fc32','r');
 raw = fread(f, Inf, 'float32'); fclose(f);
 x = complex(raw(1:2:end), raw(2:2:end));
 
@@ -284,11 +290,16 @@ m = abs(c);
 [peak, idx] = max(m);
 fprintf('peak/mean %.1f at lag %d\n', peak/mean(m), idx-1);
 
-% carrier offset from the phase advance between repetitions
+% carrier offset from the phase advance between repetitions.
+% Correlate over a longer stretch first: a handful of repetitions gives a
+% noisy estimate, and the phase wraps if the offset is large.
 fs = 30.72e6;
-k = idx + (0:9)*N;
-cfo = angle(mean(c(k(2:end)).*conj(c(k(1:end-1))))) / (2*pi*N/fs);
-fprintf('CFO %.1f Hz\n', cfo);
+cl = conv(x(1:200*N), conj(flipud(zc)), 'valid');
+[~, i0] = max(abs(cl));
+reps = floor((numel(cl) - i0) / N);
+k = i0 + (0:reps-1)*N;
+cfo = angle(mean(cl(k(2:end)).*conj(cl(k(1:end-1))))) / (2*pi*N/fs);
+fprintf('CFO %.1f Hz over %d repetitions\n', cfo, reps);
 
 plot(m); xlabel('lag (samples)'); ylabel('|correlation|'); grid on
 ```
@@ -300,7 +311,7 @@ us repeatedly (NOTES §3.3). A peak every 401 samples is the sequence.
 ## Python
 
 ```bash
-./07_sync/tools/analyze_capture.py /dev/shm/cap.fc32 /dev/shm/zc_reference.fc32
+./07_sync/tools/analyze_capture.py ~/captures/cap.fc32 ~/captures/zc_reference.fc32
 ```
 
 ```python

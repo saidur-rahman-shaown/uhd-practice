@@ -54,9 +54,9 @@ def main():
         print(f"  WARNING: capture reports "
               f"{cap_meta['overflows']} overflows -- it has gaps")
 
-    # Correlate over a window a few repetitions long. The sequence repeats,
-    # so there is no need to search the whole capture.
-    win = min(len(cap), 8 * len(ref))
+    # Correlate over a couple of hundred repetitions. Eight is enough to find
+    # the sequence, but a longer stretch makes the peak statistics steadier.
+    win = min(len(cap), 200 * len(ref))
     seg = cap[:win]
 
     if len(seg) < len(ref):

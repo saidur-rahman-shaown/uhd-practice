@@ -31,8 +31,21 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release .
 cmake --build build
 ```
 
-Binaries land in `build/<lesson>/`. The Mac has no UHD — build and run on the
-NUCs.
+Binaries land in `build/<lesson>/`, for example `build/07_sync/zc_sync`.
+
+Each lesson also builds on its own, which is quicker while working on one:
+
+```bash
+cd 07_sync
+cmake -S . -B build -G Ninja
+cmake --build build          # binaries land in 07_sync/build/
+```
+
+Note the two give different binary paths — `build/07_sync/zc_sync` from the
+root, `07_sync/build/zc_sync` from the lesson. The commands below use the root
+build throughout.
+
+The Mac has no UHD — build and run on the NUCs.
 
 ## Quick start
 

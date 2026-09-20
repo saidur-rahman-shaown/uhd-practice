@@ -1,10 +1,11 @@
 function plot_capture(cap_path, n_show, N, u)
 %PLOT_CAPTURE  Plot an rx_capture file and correlate it against Zadoff-Chu.
 %
-%   plot_capture                                   % uses the defaults below
-%   plot_capture('~/captures/cap.fc32')
-%   plot_capture('~/captures/cap.fc32', 8000)      % samples to plot
-%   plot_capture('~/captures/cap.fc32', 4000, 401, 25)   % length, root
+%   plot_capture                              % cap.fc32 in the current folder
+%   plot_capture('cap.fc32')
+%   plot_capture('cap.fc32', 8000)            % samples to plot
+%   plot_capture('cap.fc32', 4000, 401, 25)   % samples, length, root
+%   plot_capture('~/captures/cap.fc32')       % ~ is expanded
 %
 % Plots the magnitude, real and imaginary parts of the capture, generates the
 % same Zadoff-Chu sequence the transmitter sent, correlates, and reports where
@@ -17,10 +18,12 @@ function plot_capture(cap_path, n_show, N, u)
 % The capture is large -- a second at 30.72 MS/s is 30.7 million samples -- so
 % only the first n_show are drawn. Correlation uses a longer stretch.
 
-    if nargin < 1 || isempty(cap_path), cap_path = '~/captures/cap.fc32'; end
+    if nargin < 1 || isempty(cap_path), cap_path = 'cap.fc32'; end
     if nargin < 2 || isempty(n_show),   n_show   = 4000;                  end
     if nargin < 3 || isempty(N),        N        = 401;   end   % zc_length
     if nargin < 4 || isempty(u),        u        = 25;    end   % zc_root
+
+    cap_path = expand_tilde(cap_path);
 
     meta = read_sidecar(cap_path);
     fs   = getfield_default(meta, 'rate_hz', 30.72e6);
@@ -174,5 +177,18 @@ function v = getfield_default(s, name, default)
         if isnan(v), v = s.(name); end
     else
         v = default;
+    end
+end
+
+
+function p = expand_tilde(p)
+%EXPAND_TILDE  fopen does not expand ~, so do it here.
+    if startsWith(p, '~')
+        if ispc
+            home = getenv('USERPROFILE');
+        else
+            home = getenv('HOME');
+        end
+        p = fullfile(home, extractAfter(p, 1));
     end
 end

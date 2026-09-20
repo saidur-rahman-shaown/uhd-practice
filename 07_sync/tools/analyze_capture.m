@@ -1,9 +1,13 @@
 function analyze_capture(cap_path, zc_length, zc_root)
 %ANALYZE_CAPTURE  Correlate an rx_capture file against a Zadoff-Chu sequence.
 %
-%   analyze_capture                                     % all defaults
-%   analyze_capture('~/captures/cap.fc32')
-%   analyze_capture('~/captures/cap.fc32', 401, 25)     % length, root
+%   analyze_capture                                % cap.fc32 in the current folder
+%   analyze_capture('cap.fc32')
+%   analyze_capture('cap.fc32', 401, 25)           % length, root
+%   analyze_capture('~/captures/cap.fc32')         % ~ is expanded
+%
+% Defaults to cap.fc32 in the current folder, so the usual thing is to cd to
+% wherever the capture is and just run it.
 %
 % The sequence is generated here rather than read from disk, so this needs
 % only the capture -- nothing has to be copied from the transmitting machine.
@@ -17,9 +21,11 @@ function analyze_capture(cap_path, zc_length, zc_root)
 % peak at an arbitrary offset is the stream-startup transient, which
 % correlates against anything; a peak every N samples is the sequence.
 
-    if nargin < 1 || isempty(cap_path),  cap_path  = '~/captures/cap.fc32'; end
+    if nargin < 1 || isempty(cap_path),  cap_path  = 'cap.fc32'; end
     if nargin < 2 || isempty(zc_length), zc_length = 401;                   end
     if nargin < 3 || isempty(zc_root),   zc_root   = 25;                    end
+
+    cap_path = expand_tilde(cap_path);
 
     meta = read_sidecar(cap_path);
     fs   = getfield_default(meta, 'rate_hz', 30.72e6);
@@ -137,5 +143,18 @@ function v = getfield_default(s, name, default)
         if isnan(v), v = s.(name); end
     else
         v = default;
+    end
+end
+
+
+function p = expand_tilde(p)
+%EXPAND_TILDE  fopen does not expand ~, so do it here.
+    if startsWith(p, '~')
+        if ispc
+            home = getenv('USERPROFILE');
+        else
+            home = getenv('HOME');
+        end
+        p = fullfile(home, extractAfter(p, 1));
     end
 end

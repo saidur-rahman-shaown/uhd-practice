@@ -268,10 +268,16 @@ reach for first — it needs only the capture, because it generates the sequence
 itself:
 
 ```matlab
-cd 07_sync/tools
-plot_capture('~/captures/cap.fc32')        % or plot_capture with no arguments
-plot_capture('~/captures/cap.fc32', 8000)  % samples to draw
+cd ~/captures                 % wherever the capture is
+addpath('~/uhd-practice/07_sync/tools')
+plot_capture                  % defaults to cap.fc32 in the current folder
+plot_capture('cap.fc32', 8000)            % samples to draw
+plot_capture('cap.fc32', 4000, 401, 25)   % samples, ZC length, root
 ```
+
+Both scripts default to `cap.fc32` in the current folder, so the usual thing is
+to `cd` to wherever the capture is and run them with no arguments. A leading
+`~` is expanded, which `fopen` does not do on its own.
 
 It draws three figures — the capture's magnitude, real and imaginary parts; the
 Zadoff-Chu reference it generated; and the correlation, both in full and zoomed
@@ -304,12 +310,11 @@ first few thousand samples — a second at 30.72 MS/s is 30.7 million points and
 will not draw.
 
 [`analyze_capture.m`](07_sync/tools/analyze_capture.m) is the same analysis
-against the reference file the transmitter wrote, rather than a regenerated
-sequence:
+without the plots of the capture itself:
 
 ```matlab
-cd 07_sync/tools
-analyze_capture('~/captures/cap.fc32', '~/captures/zc_reference.fc32')
+analyze_capture                        % cap.fc32 in the current folder
+analyze_capture('cap.fc32', 401, 25)   % ZC length and root
 ```
 
 ```
@@ -328,7 +333,7 @@ The pieces, if you would rather do it by hand:
 
 ```matlab
 % read interleaved complex float32
-f = fopen('~/captures/cap.fc32','r');
+f = fopen('cap.fc32','r');
 raw = fread(f, Inf, 'float32'); fclose(f);
 x = complex(raw(1:2:end), raw(2:2:end));
 
@@ -365,7 +370,7 @@ us repeatedly (NOTES §3.3). A peak every 401 samples is the sequence.
 ## Python
 
 ```bash
-./07_sync/tools/analyze_capture.py ~/captures/cap.fc32 ~/captures/zc_reference.fc32
+./07_sync/tools/analyze_capture.py cap.fc32 zc_reference.fc32
 ```
 
 ```python

@@ -15,7 +15,7 @@ needed to reproduce them.
 | [`common/`](common/) | shared setup: `Config`, `create_usrp`, test waveform, async decoders, master-clock and buffer helpers |
 | [`01_device/`](01_device/) | what is attached and what it can do — run this first |
 | [`02_rx/`](02_rx/) | receiving samples |
-| [`03_tx/`](03_tx/) | transmitting samples |
+| [`03_tx/`](03_tx/) | transmitting samples — timed Zadoff-Chu bursts |
 | [`04_metadata/`](04_metadata/) | what the device reports back, and the `U`/`L`/`O` status characters |
 | [`05_timed_commands/`](05_timed_commands/) | host call timing, scheduling lead time, timed bursts |
 | [`06_tdd/`](06_tdd/) | TDD frames, slot cadence, sustainable rate |
@@ -70,6 +70,39 @@ Three commands, in order, on a machine you have not used before:
 Prints the device tree, master clock, antennas, frequency and gain ranges,
 clock and time sources, and available sensors. Run it first: it proves UHD can
 find and open the radio before an experiment blames itself for a USB cable.
+
+## 02_rx / 03_tx — receiving and transmitting
+
+```bash
+./build/02_rx/rx_samples                         # 0.1 s @ 30.72 MS/s, 3515 MHz, 30 dB
+./build/02_rx/rx_samples 0.5 30.72e6 3515 50     # seconds, rate, freq_MHz, gain
+
+./build/03_tx/tx_samples                         # ZC burst every 10 ms for 5 s
+./build/03_tx/tx_samples 5 10 80 30.72e6 401 25  # seconds, period_ms, gain, rate, length, root
+```
+
+`rx_samples` measures level from the samples and reports dBFS, peak, crest
+factor and headroom. **The device's `rssi` sensor is not usable** — it reads
+the AD9361's raw register, referred to the internal gain state rather than the
+antenna. Measured against a steady transmitter while raising the gain it fell
+10 dB while the samples rose 22 dB. The program prints it, labelled not to be
+used.
+
+`tx_samples` sends one self-contained timed burst per period and reports what
+the device says about each:
+
+```
+burst        : 401 samples = 13.053 us
+period       : 10.000 ms  (duty 0.131 %)
+  burst ACK    = 500 of 500
+  late         = 0
+  on time      = 100.0 %
+```
+
+Measured at the far radio, the bursts land 307200 samples apart — 10.0000 ms,
+with 33 ns of spread across a 100 ms capture. Per-burst scheduling is right at
+this cadence but wrong below about 10 ms, where half the bursts are dropped;
+see [`06_tdd/`](06_tdd/) for the continuous-stream approach that cadence needs.
 
 ## 04_metadata — the status characters
 

@@ -25,11 +25,17 @@
  * Then correlate offline. The reference is written as fc32, the same
  * format as the capture, so both load the same way.
  *
- * The sequence repeats back to back with no silent gap. Padding each
- * repetition with zeros stops these B210s emitting altogether, and
- * the gap buys nothing: the correlator finds one peak per repetition
- * either way, so the recovered offset is simply modulo the sequence
- * length.
+ * The sequence repeats back to back with no silent gap. The gap buys
+ * nothing here -- the correlator finds one peak per repetition either
+ * way, so the recovered offset is simply modulo the sequence length --
+ * and leaving it out keeps the transmitted power up.
+ *
+ * An earlier comment here claimed that padding stopped these B210s
+ * emitting at all. That was wrong: it was measured during a spell when
+ * the radio was intermittently silent regardless of what was sent (see
+ * NOTES section 3.6), and zc_tx.py transmits a padded sequence at 25%
+ * duty perfectly well. 03_tx/tx_samples sends sparse timed bursts at
+ * 0.13% duty, also without trouble.
  */
 
 std::vector<complex_t> make_zc(size_t length, size_t root)
